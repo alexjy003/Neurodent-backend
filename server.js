@@ -6,13 +6,16 @@ const passport = require('passport');
 require('dotenv').config();
 
 const authRoutes = require('./routes/auth');
+const uploadRoutes = require('./routes/upload');
+const doctorRoutes = require('./routes/doctors');
+const { verifyCloudinaryConfig } = require('./config/cloudinary');
 require('./config/passport');
 
 const app = express();
 
 // Middleware
 app.use(cors({
-  origin: process.env.FRONTEND_URL,
+  origin: process.env.FRONTEND_URL.split(',').map(url => url.trim()),
   credentials: true
 }));
 app.use(express.json());
@@ -26,11 +29,16 @@ app.use(passport.session());
 
 // Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/upload', uploadRoutes);
+app.use('/api/doctors', doctorRoutes);
 
 // MongoDB connection
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('Connected to MongoDB Atlas'))
   .catch(err => console.error('MongoDB connection error:', err));
+
+// Verify Cloudinary configuration
+verifyCloudinaryConfig();
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
