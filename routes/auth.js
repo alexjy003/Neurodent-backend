@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
 const passport = require('passport');
 const Patient = require('../models/Patient');
+const Doctor = require('../models/Doctor');
 const auth = require('../middleware/auth');
 const emailService = require('../services/emailService');
 
@@ -659,6 +660,106 @@ router.post('/reset-password', [
   } catch (error) {
     console.error('Reset password error:', error);
     res.status(500).json({ message: 'Server error. Please try again.' });
+  }
+});
+
+// ==================== DOCTOR AUTHENTICATION ROUTES ====================
+
+// Generate JWT token for doctor
+const generateDoctorToken = (doctorId) => {
+  return jwt.sign({ doctorId }, process.env.JWT_SECRET, { expiresIn: '7d' });
+};
+
+// Doctor login
+router.post('/doctor/login', [
+  body('email').isEmail().withMessage('Valid email is required'),
+  body('password').notEmpty().withMessage('Password is required')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array()
+      });
+    }
+
+    const { email, password } = req.body;
+
+    // Find doctor by email
+    const doctor = await Doctor.findOne({ email });
+    if (!doctor) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid email or password'
+      });
+    }
+
+    // Check if account is active
+    if (doctor.availability !== 'active') {
+      return res.status(403).json({
+        success: false,
+        message: 'Your account has been deactivated. Please contact the administrator.',
+        accountStatus: 'inactive'
+      });
+    }
+
+    // Check password
+    const isMatch = await doctor.comparePassword(password);
+    if (!isMatch) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid email or password'
+      });
+    }
+
+    // Update last login
+    await doctor.updateLastLogin();
+
+    // Generate token
+    const token = generateDoctorToken(doctor._id);
+
+    // Return success response
+    res.json({
+      success: true,
+      message: 'Login successful',
+      token,
+      doctor: {
+        id: doctor._id,
+        firstName: doctor.firstName,
+        lastName: doctor.lastName,
+        email: doctor.email,
+        specialization: doctor.specialization,
+        position: doctor.position,
+        profileImage: doctor.profileImage
+      }
+    });
+
+  } catch (error) {
+    console.error('Doctor login error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error. Please try again.'
+    });
+  }
+});
+
+// Doctor logout (optional - mainly for clearing server-side sessions if needed)
+router.post('/doctor/logout', async (req, res) => {
+  try {
+    // In a JWT-based system, logout is mainly handled client-side
+    // But we can add any server-side cleanup here if needed
+    res.json({
+      success: true,
+      message: 'Logged out successfully'
+    });
+  } catch (error) {
+    console.error('Doctor logout error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during logout'
+    });
   }
 });
 
