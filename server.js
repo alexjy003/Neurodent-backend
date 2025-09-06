@@ -8,6 +8,8 @@ require('dotenv').config();
 const authRoutes = require('./routes/auth');
 const uploadRoutes = require('./routes/upload');
 const doctorRoutes = require('./routes/doctors');
+const pharmacistRoutes = require('./routes/pharmacists');
+const pharmacistAuthRoutes = require('./routes/pharmacistAuth');
 const { verifyCloudinaryConfig } = require('./config/cloudinary');
 require('./config/passport');
 
@@ -31,6 +33,8 @@ app.use(passport.session());
 app.use('/api/auth', authRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/doctors', doctorRoutes);
+app.use('/api/pharmacists', pharmacistRoutes);
+app.use('/api/pharmacist-auth', pharmacistAuthRoutes);
 
 // MongoDB connection
 mongoose.connect(process.env.MONGODB_URI)

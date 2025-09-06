@@ -4,6 +4,7 @@ const { body, validationResult } = require('express-validator');
 const passport = require('passport');
 const Patient = require('../models/Patient');
 const Doctor = require('../models/Doctor');
+const Pharmacist = require('../models/Pharmacist');
 const auth = require('../middleware/auth');
 const emailService = require('../services/emailService');
 
@@ -670,6 +671,11 @@ const generateDoctorToken = (doctorId) => {
   return jwt.sign({ doctorId }, process.env.JWT_SECRET, { expiresIn: '7d' });
 };
 
+// Generate JWT token for pharmacist
+const generatePharmacistToken = (pharmacistId) => {
+  return jwt.sign({ pharmacistId }, process.env.JWT_SECRET, { expiresIn: '7d' });
+};
+
 // Doctor login
 router.post('/doctor/login', [
   body('email').isEmail().withMessage('Valid email is required'),
@@ -756,6 +762,103 @@ router.post('/doctor/logout', async (req, res) => {
     });
   } catch (error) {
     console.error('Doctor logout error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during logout'
+    });
+  }
+});
+
+// ==================== PHARMACIST AUTHENTICATION ROUTES ====================
+
+// Pharmacist login
+router.post('/pharmacist/login', [
+  body('email').isEmail().withMessage('Valid email is required'),
+  body('password').notEmpty().withMessage('Password is required')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array()
+      });
+    }
+
+    const { email, password } = req.body;
+
+    // Find pharmacist by email
+    const pharmacist = await Pharmacist.findOne({ email });
+    if (!pharmacist) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid email or password'
+      });
+    }
+
+    // Check if account is active
+    if (pharmacist.availability !== 'Active') {
+      return res.status(403).json({
+        success: false,
+        message: 'Your account has been deactivated. Please contact the administrator.',
+        accountStatus: 'inactive'
+      });
+    }
+
+    // Check password
+    const isMatch = await pharmacist.comparePassword(password);
+    if (!isMatch) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid email or password'
+      });
+    }
+
+    // Update last login
+    await pharmacist.updateLastLogin();
+
+    // Generate token
+    const token = generatePharmacistToken(pharmacist._id);
+
+    // Return success response
+    res.json({
+      success: true,
+      message: 'Login successful',
+      token,
+      pharmacist: {
+        id: pharmacist._id,
+        firstName: pharmacist.firstName,
+        lastName: pharmacist.lastName,
+        name: pharmacist.name,
+        email: pharmacist.email,
+        department: pharmacist.department,
+        specialization: pharmacist.specialization,
+        shift: pharmacist.shift,
+        profileImage: pharmacist.profileImage
+      }
+    });
+
+  } catch (error) {
+    console.error('Pharmacist login error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error. Please try again.'
+    });
+  }
+});
+
+// Pharmacist logout
+router.post('/pharmacist/logout', async (req, res) => {
+  try {
+    // In a JWT-based system, logout is mainly handled client-side
+    // But we can add any server-side cleanup here if needed
+    res.json({
+      success: true,
+      message: 'Logged out successfully'
+    });
+  } catch (error) {
+    console.error('Pharmacist logout error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error during logout'
