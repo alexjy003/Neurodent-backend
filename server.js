@@ -10,6 +10,7 @@ const uploadRoutes = require('./routes/upload');
 const doctorRoutes = require('./routes/doctors');
 const pharmacistRoutes = require('./routes/pharmacists');
 const pharmacistAuthRoutes = require('./routes/pharmacistAuth');
+const scheduleRoutes = require('./routes/schedules');
 const { verifyCloudinaryConfig } = require('./config/cloudinary');
 require('./config/passport');
 
@@ -35,6 +36,7 @@ app.use('/api/upload', uploadRoutes);
 app.use('/api/doctors', doctorRoutes);
 app.use('/api/pharmacists', pharmacistRoutes);
 app.use('/api/pharmacist-auth', pharmacistAuthRoutes);
+app.use('/api/schedules', scheduleRoutes);
 
 // MongoDB connection
 mongoose.connect(process.env.MONGODB_URI)
