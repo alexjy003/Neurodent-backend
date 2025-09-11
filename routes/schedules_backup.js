@@ -6,11 +6,8 @@ const Doctor = require('../models/Doctor');
 const jwt = require('jsonwebtoken');
 
 // Middleware to authenticate doctor
-const authenticateDoctor = async (req, res, n  body('slots.*.type')
-    .notEmpty()
-    .withMessage('Schedule type is required')
-    .isLength({ min: 1, max: 100 })
-    .withMessage('Schedule type must be between 1 and 100 characters'), {
+const authenticateDoctor = async (req, res, next) => {
+  try {
     const token = req.header('Authorization')?.replace('Bearer ', '');
     
     console.log('Schedule auth - Token received:', token ? 'Yes' : 'No'); // Debug log
