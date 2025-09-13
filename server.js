@@ -23,8 +23,8 @@ const scheduleRoutes = require('./routes/schedules');
 const appointmentRoutes = require('./routes/appointments');
 const { verifyCloudinaryConfig } = require('./config/cloudinary');
 
-// Temporarily disable passport configuration to test schedule functionality
-// require('./config/passport');
+// Initialize passport configuration
+require('./config/passport');
 
 const app = express();
 
