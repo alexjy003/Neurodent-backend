@@ -15,6 +15,7 @@ const scheduleSlotSchema = new mongoose.Schema({
     type: String,
     required: true,
     enum: [
+      'Available',
       'Morning Consultations',
       'Afternoon Procedures', 
       'Evening Consultations',
@@ -100,11 +101,15 @@ scheduleSchema.methods.calculateTotalHours = function() {
   
   Object.values(this.weeklySchedule).forEach(daySlots => {
     daySlots.forEach(slot => {
-      if (slot.type !== 'Day Off' && slot.isAvailable) {
+      // Calculate hours for all slots except 'Day Off'
+      if (slot.type !== 'Day Off' && slot.isAvailable !== false) {
         const start = new Date(`2000-01-01 ${slot.startTime}`);
         const end = new Date(`2000-01-01 ${slot.endTime}`);
-        const diffMs = end - start;
-        totalMinutes += diffMs / (1000 * 60);
+        
+        if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && end > start) {
+          const diffMs = end - start;
+          totalMinutes += diffMs / (1000 * 60);
+        }
       }
     });
   });

@@ -355,6 +355,7 @@ router.put('/day/:day', authenticateDoctor, [
     .withMessage('End time must be in HH:MM format'),
   body('slots.*.type')
     .isIn([
+      'Available',
       'Morning Consultations',
       'Afternoon Procedures', 
       'Evening Consultations',
@@ -517,6 +518,7 @@ router.get('/history', authenticateDoctor, async (req, res) => {
 router.delete('/slot/:day/:slotId', authenticateDoctor, async (req, res) => {
   try {
     const { day, slotId } = req.params;
+    const { weekStartDate } = req.query; // Optional week parameter
     
     // Validate day parameter
     const validDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
@@ -527,17 +529,31 @@ router.delete('/slot/:day/:slotId', authenticateDoctor, async (req, res) => {
       });
     }
 
-    // Find the current week's schedule
-    const today = new Date();
-    const currentWeekStart = new Date(today);
-    const dayOfWeek = today.getDay();
-    const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-    currentWeekStart.setDate(today.getDate() - daysFromMonday);
-    currentWeekStart.setHours(0, 0, 0, 0);
+    let currentWeekStart, currentWeekEnd;
+    
+    if (weekStartDate) {
+      // Use the provided week start date
+      currentWeekStart = new Date(weekStartDate + 'T00:00:00.000Z');
+      currentWeekEnd = new Date(currentWeekStart);
+      currentWeekEnd.setDate(currentWeekStart.getDate() + 6);
+      currentWeekEnd.setHours(23, 59, 59, 999);
+      
+      console.log('Using provided week:', currentWeekStart.toISOString(), 'to', currentWeekEnd.toISOString());
+    } else {
+      // Fall back to current week calculation
+      const today = new Date();
+      currentWeekStart = new Date(today);
+      const dayOfWeek = today.getDay();
+      const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+      currentWeekStart.setDate(today.getDate() - daysFromMonday);
+      currentWeekStart.setHours(0, 0, 0, 0);
 
-    const currentWeekEnd = new Date(currentWeekStart);
-    currentWeekEnd.setDate(currentWeekStart.getDate() + 6);
-    currentWeekEnd.setHours(23, 59, 59, 999);
+      currentWeekEnd = new Date(currentWeekStart);
+      currentWeekEnd.setDate(currentWeekStart.getDate() + 6);
+      currentWeekEnd.setHours(23, 59, 59, 999);
+      
+      console.log('Using current week:', currentWeekStart.toISOString(), 'to', currentWeekEnd.toISOString());
+    }
 
     let schedule = await Schedule.findOne({
       doctorId: req.doctor._id,

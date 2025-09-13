@@ -3,7 +3,16 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const session = require('express-session');
 const passport = require('passport');
-require('dotenv').config();
+const path = require('path');
+
+// Load environment variables with explicit path
+require('dotenv').config({ path: path.join(__dirname, '.env') });
+
+// Debug environment variables
+console.log('🔍 Environment check:');
+console.log('MONGODB_URI:', process.env.MONGODB_URI ? 'SET' : 'UNDEFINED');
+console.log('FRONTEND_URL:', process.env.FRONTEND_URL ? 'SET' : 'UNDEFINED');
+console.log('SESSION_SECRET:', process.env.SESSION_SECRET ? 'SET' : 'UNDEFINED');
 
 const authRoutes = require('./routes/auth');
 const uploadRoutes = require('./routes/upload');
@@ -11,14 +20,17 @@ const doctorRoutes = require('./routes/doctors');
 const pharmacistRoutes = require('./routes/pharmacists');
 const pharmacistAuthRoutes = require('./routes/pharmacistAuth');
 const scheduleRoutes = require('./routes/schedules');
+const appointmentRoutes = require('./routes/appointments');
 const { verifyCloudinaryConfig } = require('./config/cloudinary');
-require('./config/passport');
+
+// Temporarily disable passport configuration to test schedule functionality
+// require('./config/passport');
 
 const app = express();
 
 // Middleware
 app.use(cors({
-  origin: process.env.FRONTEND_URL.split(',').map(url => url.trim()),
+  origin: (process.env.FRONTEND_URL || 'http://localhost:3000').split(',').map(url => url.trim()),
   credentials: true
 }));
 app.use(express.json());
@@ -37,6 +49,7 @@ app.use('/api/doctors', doctorRoutes);
 app.use('/api/pharmacists', pharmacistRoutes);
 app.use('/api/pharmacist-auth', pharmacistAuthRoutes);
 app.use('/api/schedules', scheduleRoutes);
+app.use('/api/appointments', appointmentRoutes);
 
 // MongoDB connection
 mongoose.connect(process.env.MONGODB_URI)
