@@ -8,15 +8,24 @@ const doctorAuth = require('../middleware/doctorAuth');
 
 // Helper function to convert 12-hour time to 24-hour format
 const convertTo24Hour = (time12h) => {
+  // Handle already 24-hour format
+  if (!time12h.includes(' ')) {
+    return time12h;
+  }
+  
   const [time, modifier] = time12h.split(' ');
   let [hours, minutes] = time.split(':');
   
-  if (hours === '12') {
-    hours = '00';
-  }
+  hours = parseInt(hours, 10);
   
-  if (modifier === 'PM') {
-    hours = parseInt(hours, 10) + 12;
+  if (modifier === 'AM') {
+    if (hours === 12) {
+      hours = 0;
+    }
+  } else { // PM
+    if (hours !== 12) {
+      hours += 12;
+    }
   }
   
   return `${hours.toString().padStart(2, '0')}:${minutes}`;
@@ -38,8 +47,11 @@ router.get('/doctor/:doctorId/slots/:date', authenticatePatient, async (req, res
     
     console.log(`Fetching slots for doctor ${doctorId} on date ${date}`);
     
-    // Parse and validate the date
-    const appointmentDate = new Date(date);
+    // Parse date more carefully to avoid timezone issues
+    const [year, month, day] = date.split('-').map(Number);
+    const appointmentDate = new Date(year, month - 1, day); // month is 0-indexed
+    console.log(`Parsed appointment date: ${appointmentDate.toISOString()}`);
+    
     if (isNaN(appointmentDate.getTime())) {
       return res.status(400).json({
         success: false,
@@ -61,12 +73,15 @@ router.get('/doctor/:doctorId/slots/:date', authenticatePatient, async (req, res
     
     // Get the day name
     const dayName = appointmentDate.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+    console.log(`Day name for ${date}: ${dayName}`);
     
     // Find doctor's schedule that covers this date
     const schedules = await Schedule.find({
       doctorId,
       status: 'active'
     }).sort({ weekStartDate: -1 });
+    
+    console.log(`Found ${schedules.length} active schedules for doctor ${doctorId}`);
     
     let doctorSchedule = null;
     
@@ -76,13 +91,26 @@ router.get('/doctor/:doctorId/slots/:date', authenticatePatient, async (req, res
       const weekEnd = new Date(weekStart);
       weekEnd.setDate(weekStart.getDate() + 6);
       
-      if (appointmentDate >= weekStart && appointmentDate <= weekEnd) {
+      // Use date-only comparison to avoid timezone issues
+      const appointmentDateOnly = new Date(appointmentDate.getFullYear(), appointmentDate.getMonth(), appointmentDate.getDate());
+      const weekStartOnly = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate());
+      const weekEndOnly = new Date(weekEnd.getFullYear(), weekEnd.getMonth(), weekEnd.getDate());
+      
+      console.log(`Checking schedule: ${weekStartOnly.toISOString().split('T')[0]} to ${weekEndOnly.toISOString().split('T')[0]}`);
+      console.log(`Appointment date: ${appointmentDateOnly.toISOString().split('T')[0]}`);
+      
+      if (appointmentDateOnly >= weekStartOnly && appointmentDateOnly <= weekEndOnly) {
         doctorSchedule = schedule;
+        console.log(`Found matching schedule for week starting ${weekStartOnly.toISOString().split('T')[0]}`);
         break;
       }
     }
     
     if (!doctorSchedule || !doctorSchedule.weeklySchedule[dayName] || doctorSchedule.weeklySchedule[dayName].length === 0) {
+      console.log(`No schedule found for ${dayName}. Schedule exists: ${!!doctorSchedule}, Day slots exist: ${!!(doctorSchedule && doctorSchedule.weeklySchedule[dayName])}`);
+      if (doctorSchedule) {
+        console.log(`Available days in schedule:`, Object.keys(doctorSchedule.weeklySchedule));
+      }
       return res.json({
         success: false,
         message: "Time slots not scheduled by the doctor",
@@ -92,6 +120,7 @@ router.get('/doctor/:doctorId/slots/:date', authenticatePatient, async (req, res
     
     // Get scheduled time slots for this day
     const daySlots = doctorSchedule.weeklySchedule[dayName];
+    console.log(`Day slots for ${dayName}:`, JSON.stringify(daySlots, null, 2));
     
     // Get existing appointments for this doctor on this date
     const existingAppointments = await Appointment.getDoctorAppointments(doctorId, appointmentDate);
@@ -107,8 +136,10 @@ router.get('/doctor/:doctorId/slots/:date', authenticatePatient, async (req, res
       }
       
       // Convert times to 24-hour format for comparison
-      const startTime24 = convertTo24Hour(slot.startTime);
-      const endTime24 = convertTo24Hour(slot.endTime);
+      const startTime24 = slot.startTime.includes(' ') ? convertTo24Hour(slot.startTime) : slot.startTime;
+      const endTime24 = slot.endTime.includes(' ') ? convertTo24Hour(slot.endTime) : slot.endTime;
+      
+      console.log(`Processing slot: ${slot.startTime} - ${slot.endTime} => ${startTime24} - ${endTime24}`);
       
       // Check if this slot is already booked
       const isBooked = existingAppointments.some(appointment => 
@@ -127,6 +158,8 @@ router.get('/doctor/:doctorId/slots/:date', authenticatePatient, async (req, res
       });
     }
     
+    console.log(`Generated ${availableSlots.length} available slots:`, JSON.stringify(availableSlots, null, 2));
+
     res.json({
       success: true,
       availableSlots,
@@ -134,9 +167,7 @@ router.get('/doctor/:doctorId/slots/:date', authenticatePatient, async (req, res
       doctorId,
       totalSlots: availableSlots.length,
       availableCount: availableSlots.filter(slot => slot.isAvailable).length
-    });
-    
-  } catch (error) {
+    });  } catch (error) {
     console.error('Error fetching doctor slots:', error);
     res.status(500).json({
       success: false,
@@ -167,9 +198,25 @@ router.post('/book', [
     }
     
     const { doctorId, appointmentDate, startTime, endTime, slotType, symptoms } = req.body;
-    const patientId = req.user.id;
+    const patientId = req.user._id;
     
     console.log(`Booking appointment: Patient ${patientId}, Doctor ${doctorId}, Date ${appointmentDate}, Time ${startTime}-${endTime}`);
+    console.log(`Start time: "${startTime}", End time: "${endTime}", Slot type: "${slotType}"`);
+    
+    // Map generic "Available" slot type to specific appointment type based on time
+    let appointmentSlotType = slotType;
+    if (slotType === 'Available') {
+      const startHour = parseInt(startTime.split(':')[0]);
+      if (startHour < 12) {
+        appointmentSlotType = 'Morning Consultations';
+      } else if (startHour < 17) {
+        appointmentSlotType = 'Afternoon Procedures';
+      } else {
+        appointmentSlotType = 'Evening Consultations';
+      }
+    }
+    
+    console.log(`Mapped slot type from "${slotType}" to "${appointmentSlotType}"`);
     
     const bookingDate = new Date(appointmentDate);
     
@@ -213,7 +260,7 @@ router.post('/book', [
       appointmentDate: bookingDate,
       startTime,
       endTime,
-      slotType,
+      slotType: appointmentSlotType,
       symptoms: symptoms || '',
       status: 'scheduled'
     });
@@ -263,7 +310,7 @@ router.post('/book', [
 // Get patient's appointments
 router.get('/my-appointments', authenticatePatient, async (req, res) => {
   try {
-    const patientId = req.user.id;
+    const patientId = req.user._id;
     const { limit = 10, status = 'all' } = req.query;
     
     let filter = { patientId };
@@ -359,7 +406,7 @@ router.get('/doctor/my-appointments', doctorAuth, async (req, res) => {
 router.patch('/cancel/:appointmentId', authenticatePatient, async (req, res) => {
   try {
     const { appointmentId } = req.params;
-    const patientId = req.user.id;
+    const patientId = req.user._id;
     
     const appointment = await Appointment.findOne({
       _id: appointmentId,

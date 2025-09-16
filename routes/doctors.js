@@ -2,19 +2,142 @@ const express = require('express');
 const router = express.Router();
 const { body, validationResult } = require('express-validator');
 const Doctor = require('../models/Doctor');
+const Schedule = require('../models/Schedule');
+const Appointment = require('../models/Appointment');
 const { uploadSingle, handleUploadResponse } = require('../middleware/cloudinaryUpload');
 const { deleteImage } = require('../config/cloudinary');
+
+// Helper function to get next available slot for a doctor
+const getNextAvailableSlot = async (doctorId) => {
+  try {
+    // Start from tomorrow
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    // Check next 14 days
+    for (let i = 0; i < 14; i++) {
+      const checkDate = new Date(tomorrow);
+      checkDate.setDate(tomorrow.getDate() + i);
+      
+      const dayName = checkDate.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+      
+      // Find doctor's schedule for this date
+      const schedules = await Schedule.find({
+        doctorId,
+        status: 'active'
+      }).sort({ weekStartDate: -1 });
+      
+      let doctorSchedule = null;
+      
+      for (const schedule of schedules) {
+        const weekStart = new Date(schedule.weekStartDate);
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekStart.getDate() + 6);
+        
+        const checkDateOnly = new Date(checkDate.getFullYear(), checkDate.getMonth(), checkDate.getDate());
+        const weekStartOnly = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate());
+        const weekEndOnly = new Date(weekEnd.getFullYear(), weekEnd.getMonth(), weekEnd.getDate());
+        
+        if (checkDateOnly >= weekStartOnly && checkDateOnly <= weekEndOnly) {
+          doctorSchedule = schedule;
+          break;
+        }
+      }
+      
+      if (doctorSchedule && doctorSchedule.weeklySchedule[dayName] && doctorSchedule.weeklySchedule[dayName].length > 0) {
+        const daySlots = doctorSchedule.weeklySchedule[dayName];
+        
+        // Get existing appointments for this date
+        const existingAppointments = await Appointment.getDoctorAppointments(doctorId, checkDate);
+        
+        // Check each slot for availability
+        for (const slot of daySlots) {
+          if (slot.type === 'Day Off') continue;
+          
+          // Convert times to 24-hour format for comparison
+          const startTime24 = slot.startTime.includes(' ') ? convertTo24Hour(slot.startTime) : slot.startTime;
+          const endTime24 = slot.endTime.includes(' ') ? convertTo24Hour(slot.endTime) : slot.endTime;
+          
+          // Check if this slot is already booked
+          const isBooked = existingAppointments.some(appointment => 
+            appointment.startTime === startTime24 && appointment.endTime === endTime24
+          );
+          
+          if (!isBooked) {
+            // Found an available slot
+            const formattedDate = checkDate.toLocaleDateString('en-US', { 
+              year: 'numeric', 
+              month: '2-digit', 
+              day: '2-digit' 
+            });
+            const formattedTime = convertTo12Hour(startTime24);
+            return `${formattedDate} ${formattedTime}`;
+          }
+        }
+      }
+    }
+    
+    return 'Not available';
+  } catch (error) {
+    console.error('Error getting next available slot:', error);
+    return 'Not available';
+  }
+};
+
+// Helper function to convert 24-hour time to 12-hour format
+const convertTo12Hour = (time24h) => {
+  const [hours, minutes] = time24h.split(':');
+  const hour = parseInt(hours, 10);
+  const period = hour >= 12 ? 'PM' : 'AM';
+  const hour12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+  return `${hour12}:${minutes} ${period}`;
+};
+
+// Helper function to convert 12-hour time to 24-hour format
+const convertTo24Hour = (time12h) => {
+  if (!time12h.includes(' ')) {
+    return time12h;
+  }
+  
+  const [time, modifier] = time12h.split(' ');
+  let [hours, minutes] = time.split(':');
+  
+  hours = parseInt(hours, 10);
+  
+  if (modifier === 'AM') {
+    if (hours === 12) {
+      hours = 0;
+    }
+  } else { // PM
+    if (hours !== 12) {
+      hours += 12;
+    }
+  }
+  
+  return `${hours.toString().padStart(2, '0')}:${minutes}`;
+};
 
 // Get all doctors
 router.get('/', async (req, res) => {
   try {
     const doctors = await Doctor.find().select('-password').sort({ createdAt: -1 });
     
+    // Add next available slot for each doctor
+    const doctorsWithSlots = await Promise.all(
+      doctors.map(async (doctor) => {
+        const nextSlot = await getNextAvailableSlot(doctor._id);
+        return {
+          ...doctor.toObject(),
+          nextAvailableSlot: nextSlot
+        };
+      })
+    );
+    
     res.json({
       success: true,
       data: {
-        doctors,
-        total: doctors.length
+        doctors: doctorsWithSlots,
+        total: doctorsWithSlots.length
       }
     });
   } catch (error) {

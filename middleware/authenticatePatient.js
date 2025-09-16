@@ -20,13 +20,13 @@ const authenticatePatient = async (req, res, next) => {
 
     // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    console.log('Patient auth - Token decoded:', { patientId: decoded.id });
+    console.log('Patient auth - Token decoded:', { patientId: decoded.patientId });
     
     // Find patient in database
-    const patient = await Patient.findById(decoded.id).select('-password');
+    const patient = await Patient.findById(decoded.patientId).select('-password');
     
     if (!patient) {
-      console.log('Patient auth - Patient not found for ID:', decoded.id);
+      console.log('Patient auth - Patient not found for ID:', decoded.patientId);
       return res.status(401).json({ 
         success: false, 
         message: 'Invalid token. Patient not found.' 
