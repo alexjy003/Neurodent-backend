@@ -454,6 +454,540 @@ Neurodent Clinic
       };
     }
   }
+
+  async sendAppointmentBookingConfirmation(appointmentData) {
+    try {
+      if (!this.transporter) {
+        await this.initializeTransporter();
+      }
+
+      const {
+        patientEmail,
+        patientName,
+        doctorName,
+        specialization,
+        appointmentDate,
+        timeRange,
+        slotType,
+        symptoms
+      } = appointmentData;
+
+      const formattedDate = new Date(appointmentDate).toLocaleDateString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+
+      const mailOptions = {
+        from: `"Neurodent Clinic" <${process.env.EMAIL_FROM || 'noreply@neurodent.com'}>`,
+        to: patientEmail,
+        subject: 'Appointment Confirmation - Neurodent Clinic',
+        html: `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Appointment Confirmation - Neurodent Clinic</title>
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+              .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+              .appointment-details { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #28a745; }
+              .detail-row { display: flex; justify-content: space-between; margin: 10px 0; padding: 8px 0; border-bottom: 1px solid #eee; }
+              .detail-label { font-weight: bold; color: #666; }
+              .detail-value { color: #333; }
+              .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+              .reminder { background: #d1ecf1; border: 1px solid #bee5eb; padding: 15px; border-radius: 5px; margin: 20px 0; color: #0c5460; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1>🦷 Neurodent Clinic</h1>
+                <h2>✅ Appointment Confirmed</h2>
+              </div>
+              <div class="content">
+                <p>Dear ${patientName},</p>
+                
+                <p>Your appointment has been successfully booked! Here are the details:</p>
+                
+                <div class="appointment-details">
+                  <h3 style="margin-top: 0; color: #28a745;">📅 Appointment Details</h3>
+                  
+                  <div class="detail-row">
+                    <span class="detail-label">👨‍⚕️ Doctor:</span>
+                    <span class="detail-value">${doctorName}</span>
+                  </div>
+                  
+                  <div class="detail-row">
+                    <span class="detail-label">🏥 Specialization:</span>
+                    <span class="detail-value">${specialization}</span>
+                  </div>
+                  
+                  <div class="detail-row">
+                    <span class="detail-label">📅 Date:</span>
+                    <span class="detail-value">${formattedDate}</span>
+                  </div>
+                  
+                  <div class="detail-row">
+                    <span class="detail-label">🕐 Time:</span>
+                    <span class="detail-value">${timeRange}</span>
+                  </div>
+                  
+                  <div class="detail-row">
+                    <span class="detail-label">🏷️ Appointment Type:</span>
+                    <span class="detail-value">${slotType}</span>
+                  </div>
+                  
+                  ${symptoms ? `
+                  <div class="detail-row">
+                    <span class="detail-label">📝 Symptoms/Notes:</span>
+                    <span class="detail-value">${symptoms}</span>
+                  </div>
+                  ` : ''}
+                  
+                  <div class="detail-row" style="border-bottom: none;">
+                    <span class="detail-label">📍 Location:</span>
+                    <span class="detail-value">Neurodent Clinic</span>
+                  </div>
+                </div>
+                
+                <div class="reminder">
+                  <strong>💡 Important Reminders:</strong>
+                  <ul>
+                    <li>Please arrive 15 minutes before your appointment time</li>
+                    <li>Bring a valid ID and any relevant medical records</li>
+                    <li>You can cancel or reschedule up to 2 hours before your appointment</li>
+                    <li>If you need to make changes, log into your patient dashboard</li>
+                  </ul>
+                </div>
+                
+                <p>We look forward to seeing you at Neurodent Clinic!</p>
+                
+                <p>Best regards,<br>
+                The Neurodent Clinic Team</p>
+              </div>
+              <div class="footer">
+                <p>This email was sent to ${patientEmail}</p>
+                <p>© 2025 Neurodent Clinic. All rights reserved.</p>
+              </div>
+            </div>
+          </body>
+          </html>
+        `,
+        text: `
+          Dear ${patientName},
+          
+          Your appointment has been successfully booked!
+          
+          APPOINTMENT DETAILS:
+          Doctor: ${doctorName}
+          Specialization: ${specialization}
+          Date: ${formattedDate}
+          Time: ${timeRange}
+          Appointment Type: ${slotType}
+          Location: Neurodent Clinic
+          ${symptoms ? `Symptoms/Notes: ${symptoms}` : ''}
+          
+          IMPORTANT REMINDERS:
+          - Please arrive 15 minutes before your appointment time
+          - Bring a valid ID and any relevant medical records
+          - You can cancel or reschedule up to 2 hours before your appointment
+          - If you need to make changes, log into your patient dashboard
+          
+          We look forward to seeing you at Neurodent Clinic!
+          
+          Best regards,
+          The Neurodent Clinic Team
+        `
+      };
+
+      const info = await this.transporter.sendMail(mailOptions);
+      const isRealEmail = process.env.EMAIL_USER && process.env.EMAIL_USER !== 'YOUR_GMAIL_ADDRESS@gmail.com';
+
+      console.log('📧 Appointment booking confirmation sent to:', patientEmail);
+
+      return {
+        success: true,
+        messageId: info.messageId,
+        previewUrl: !isRealEmail ? nodemailer.getTestMessageUrl(info) : null,
+        isRealEmail: isRealEmail
+      };
+
+    } catch (error) {
+      console.error('❌ Failed to send appointment booking confirmation:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  async sendAppointmentCancellationNotification(appointmentData) {
+    try {
+      if (!this.transporter) {
+        await this.initializeTransporter();
+      }
+
+      const {
+        patientEmail,
+        patientName,
+        doctorName,
+        specialization,
+        appointmentDate,
+        timeRange,
+        slotType,
+        cancellationReason
+      } = appointmentData;
+
+      const formattedDate = new Date(appointmentDate).toLocaleDateString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+
+      const mailOptions = {
+        from: `"Neurodent Clinic" <${process.env.EMAIL_FROM || 'noreply@neurodent.com'}>`,
+        to: patientEmail,
+        subject: 'Appointment Cancelled - Neurodent Clinic',
+        html: `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Appointment Cancelled - Neurodent Clinic</title>
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+              .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+              .appointment-details { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #dc3545; }
+              .detail-row { display: flex; justify-content: space-between; margin: 10px 0; padding: 8px 0; border-bottom: 1px solid #eee; }
+              .detail-label { font-weight: bold; color: #666; }
+              .detail-value { color: #333; }
+              .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+              .booking-info { background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; border-radius: 5px; margin: 20px 0; color: #155724; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1>🦷 Neurodent Clinic</h1>
+                <h2>❌ Appointment Cancelled</h2>
+              </div>
+              <div class="content">
+                <p>Dear ${patientName},</p>
+                
+                <p>Your appointment has been successfully cancelled as requested.</p>
+                
+                <div class="appointment-details">
+                  <h3 style="margin-top: 0; color: #dc3545;">📅 Cancelled Appointment Details</h3>
+                  
+                  <div class="detail-row">
+                    <span class="detail-label">👨‍⚕️ Doctor:</span>
+                    <span class="detail-value">${doctorName}</span>
+                  </div>
+                  
+                  <div class="detail-row">
+                    <span class="detail-label">🏥 Specialization:</span>
+                    <span class="detail-value">${specialization}</span>
+                  </div>
+                  
+                  <div class="detail-row">
+                    <span class="detail-label">📅 Date:</span>
+                    <span class="detail-value">${formattedDate}</span>
+                  </div>
+                  
+                  <div class="detail-row">
+                    <span class="detail-label">🕐 Time:</span>
+                    <span class="detail-value">${timeRange}</span>
+                  </div>
+                  
+                  <div class="detail-row" style="border-bottom: none;">
+                    <span class="detail-label">🏷️ Appointment Type:</span>
+                    <span class="detail-value">${slotType}</span>
+                  </div>
+                </div>
+                
+                <div class="booking-info">
+                  <strong>💡 Need to Book Another Appointment?</strong>
+                  <p>You can easily book a new appointment by:</p>
+                  <ul>
+                    <li>Logging into your patient dashboard</li>
+                    <li>Browsing available doctors and time slots</li>
+                    <li>Calling our clinic directly</li>
+                  </ul>
+                </div>
+                
+                <p>If you have any questions or need assistance with booking a new appointment, please don't hesitate to contact us.</p>
+                
+                <p>Thank you for choosing Neurodent Clinic.</p>
+                
+                <p>Best regards,<br>
+                The Neurodent Clinic Team</p>
+              </div>
+              <div class="footer">
+                <p>This email was sent to ${patientEmail}</p>
+                <p>© 2025 Neurodent Clinic. All rights reserved.</p>
+              </div>
+            </div>
+          </body>
+          </html>
+        `,
+        text: `
+          Dear ${patientName},
+          
+          Your appointment has been successfully cancelled as requested.
+          
+          CANCELLED APPOINTMENT DETAILS:
+          Doctor: ${doctorName}
+          Specialization: ${specialization}
+          Date: ${formattedDate}
+          Time: ${timeRange}
+          Appointment Type: ${slotType}
+          
+          NEED TO BOOK ANOTHER APPOINTMENT?
+          You can easily book a new appointment by:
+          - Logging into your patient dashboard
+          - Browsing available doctors and time slots
+          - Calling our clinic directly
+          
+          If you have any questions or need assistance with booking a new appointment, please don't hesitate to contact us.
+          
+          Thank you for choosing Neurodent Clinic.
+          
+          Best regards,
+          The Neurodent Clinic Team
+        `
+      };
+
+      const info = await this.transporter.sendMail(mailOptions);
+      const isRealEmail = process.env.EMAIL_USER && process.env.EMAIL_USER !== 'YOUR_GMAIL_ADDRESS@gmail.com';
+
+      console.log('📧 Appointment cancellation notification sent to:', patientEmail);
+
+      return {
+        success: true,
+        messageId: info.messageId,
+        previewUrl: !isRealEmail ? nodemailer.getTestMessageUrl(info) : null,
+        isRealEmail: isRealEmail
+      };
+
+    } catch (error) {
+      console.error('❌ Failed to send appointment cancellation notification:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  async sendAppointmentRescheduleNotification(appointmentData) {
+    try {
+      if (!this.transporter) {
+        await this.initializeTransporter();
+      }
+
+      const {
+        patientEmail,
+        patientName,
+        doctorName,
+        specialization,
+        oldDate,
+        oldTimeRange,
+        newDate,
+        newTimeRange,
+        slotType,
+        symptoms
+      } = appointmentData;
+
+      const formattedOldDate = new Date(oldDate).toLocaleDateString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+
+      const formattedNewDate = new Date(newDate).toLocaleDateString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+
+      const mailOptions = {
+        from: `"Neurodent Clinic" <${process.env.EMAIL_FROM || 'noreply@neurodent.com'}>`,
+        to: patientEmail,
+        subject: 'Appointment Rescheduled - Neurodent Clinic',
+        html: `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Appointment Rescheduled - Neurodent Clinic</title>
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background: linear-gradient(135deg, #17a2b8 0%, #138496 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+              .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+              .appointment-details { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #17a2b8; }
+              .detail-row { display: flex; justify-content: space-between; margin: 10px 0; padding: 8px 0; border-bottom: 1px solid #eee; }
+              .detail-label { font-weight: bold; color: #666; }
+              .detail-value { color: #333; }
+              .old-appointment { background: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; border-radius: 5px; margin: 10px 0; }
+              .new-appointment { background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; border-radius: 5px; margin: 10px 0; }
+              .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+              .reminder { background: #d1ecf1; border: 1px solid #bee5eb; padding: 15px; border-radius: 5px; margin: 20px 0; color: #0c5460; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1>🦷 Neurodent Clinic</h1>
+                <h2>🔄 Appointment Rescheduled</h2>
+              </div>
+              <div class="content">
+                <p>Dear ${patientName},</p>
+                
+                <p>Your appointment has been successfully rescheduled!</p>
+                
+                <div class="old-appointment">
+                  <h4 style="margin-top: 0; color: #721c24;">❌ Previous Appointment (Cancelled)</h4>
+                  <p><strong>Date:</strong> ${formattedOldDate}<br>
+                  <strong>Time:</strong> ${oldTimeRange}</p>
+                </div>
+                
+                <div class="new-appointment">
+                  <h4 style="margin-top: 0; color: #155724;">✅ New Appointment (Confirmed)</h4>
+                  <p><strong>Date:</strong> ${formattedNewDate}<br>
+                  <strong>Time:</strong> ${newTimeRange}</p>
+                </div>
+                
+                <div class="appointment-details">
+                  <h3 style="margin-top: 0; color: #17a2b8;">📅 Complete Appointment Details</h3>
+                  
+                  <div class="detail-row">
+                    <span class="detail-label">👨‍⚕️ Doctor:</span>
+                    <span class="detail-value">${doctorName}</span>
+                  </div>
+                  
+                  <div class="detail-row">
+                    <span class="detail-label">🏥 Specialization:</span>
+                    <span class="detail-value">${specialization}</span>
+                  </div>
+                  
+                  <div class="detail-row">
+                    <span class="detail-label">📅 Date:</span>
+                    <span class="detail-value">${formattedNewDate}</span>
+                  </div>
+                  
+                  <div class="detail-row">
+                    <span class="detail-label">🕐 Time:</span>
+                    <span class="detail-value">${newTimeRange}</span>
+                  </div>
+                  
+                  <div class="detail-row">
+                    <span class="detail-label">🏷️ Appointment Type:</span>
+                    <span class="detail-value">${slotType}</span>
+                  </div>
+                  
+                  ${symptoms ? `
+                  <div class="detail-row">
+                    <span class="detail-label">📝 Symptoms/Notes:</span>
+                    <span class="detail-value">${symptoms}</span>
+                  </div>
+                  ` : ''}
+                  
+                  <div class="detail-row" style="border-bottom: none;">
+                    <span class="detail-label">📍 Location:</span>
+                    <span class="detail-value">Neurodent Clinic</span>
+                  </div>
+                </div>
+                
+                <div class="reminder">
+                  <strong>💡 Important Reminders:</strong>
+                  <ul>
+                    <li>Please arrive 15 minutes before your new appointment time</li>
+                    <li>Bring a valid ID and any relevant medical records</li>
+                    <li>You can cancel or reschedule up to 2 hours before your appointment</li>
+                    <li>If you need to make changes, log into your patient dashboard</li>
+                  </ul>
+                </div>
+                
+                <p>We look forward to seeing you at your rescheduled appointment!</p>
+                
+                <p>Best regards,<br>
+                The Neurodent Clinic Team</p>
+              </div>
+              <div class="footer">
+                <p>This email was sent to ${patientEmail}</p>
+                <p>© 2025 Neurodent Clinic. All rights reserved.</p>
+              </div>
+            </div>
+          </body>
+          </html>
+        `,
+        text: `
+          Dear ${patientName},
+          
+          Your appointment has been successfully rescheduled!
+          
+          PREVIOUS APPOINTMENT (CANCELLED):
+          Date: ${formattedOldDate}
+          Time: ${oldTimeRange}
+          
+          NEW APPOINTMENT (CONFIRMED):
+          Date: ${formattedNewDate}
+          Time: ${newTimeRange}
+          
+          COMPLETE APPOINTMENT DETAILS:
+          Doctor: ${doctorName}
+          Specialization: ${specialization}
+          Date: ${formattedNewDate}
+          Time: ${newTimeRange}
+          Appointment Type: ${slotType}
+          Location: Neurodent Clinic
+          ${symptoms ? `Symptoms/Notes: ${symptoms}` : ''}
+          
+          IMPORTANT REMINDERS:
+          - Please arrive 15 minutes before your new appointment time
+          - Bring a valid ID and any relevant medical records
+          - You can cancel or reschedule up to 2 hours before your appointment
+          - If you need to make changes, log into your patient dashboard
+          
+          We look forward to seeing you at your rescheduled appointment!
+          
+          Best regards,
+          The Neurodent Clinic Team
+        `
+      };
+
+      const info = await this.transporter.sendMail(mailOptions);
+      const isRealEmail = process.env.EMAIL_USER && process.env.EMAIL_USER !== 'YOUR_GMAIL_ADDRESS@gmail.com';
+
+      console.log('📧 Appointment reschedule notification sent to:', patientEmail);
+
+      return {
+        success: true,
+        messageId: info.messageId,
+        previewUrl: !isRealEmail ? nodemailer.getTestMessageUrl(info) : null,
+        isRealEmail: isRealEmail
+      };
+
+    } catch (error) {
+      console.error('❌ Failed to send appointment reschedule notification:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
 }
 
 module.exports = new EmailService();

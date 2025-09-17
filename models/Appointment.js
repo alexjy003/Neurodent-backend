@@ -95,7 +95,15 @@ appointmentSchema.pre('save', function(next) {
 
 // Virtual for formatted appointment date
 appointmentSchema.virtual('formattedDate').get(function() {
-  return this.appointmentDate.toLocaleDateString('en-US', {
+  // Use UTC methods to avoid timezone shifts
+  const year = this.appointmentDate.getUTCFullYear();
+  const month = this.appointmentDate.getUTCMonth();
+  const day = this.appointmentDate.getUTCDate();
+  
+  // Create a new date in local timezone for formatting
+  const localDate = new Date(year, month, day);
+  
+  return localDate.toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
     month: 'long',

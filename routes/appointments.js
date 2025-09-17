@@ -5,6 +5,7 @@ const Schedule = require('../models/Schedule');
 const { body, validationResult } = require('express-validator');
 const authenticatePatient = require('../middleware/authenticatePatient');
 const doctorAuth = require('../middleware/doctorAuth');
+const emailService = require('../services/emailService');
 
 // Helper function to convert 12-hour time to 24-hour format
 const convertTo24Hour = (time12h) => {
@@ -49,8 +50,7 @@ router.get('/doctor/:doctorId/slots/:date', authenticatePatient, async (req, res
     
     // Parse date more carefully to avoid timezone issues
     const [year, month, day] = date.split('-').map(Number);
-    const appointmentDate = new Date(year, month - 1, day); // month is 0-indexed
-    console.log(`Parsed appointment date: ${appointmentDate.toISOString()}`);
+    const appointmentDate = new Date(Date.UTC(year, month - 1, day, 12, 0, 0, 0)); // Noon UTC to avoid timezone shifts
     
     if (isNaN(appointmentDate.getTime())) {
       return res.status(400).json({
@@ -201,7 +201,6 @@ router.post('/book', [
     const patientId = req.user._id;
     
     console.log(`Booking appointment: Patient ${patientId}, Doctor ${doctorId}, Date ${appointmentDate}, Time ${startTime}-${endTime}`);
-    console.log(`Start time: "${startTime}", End time: "${endTime}", Slot type: "${slotType}"`);
     
     // Map generic "Available" slot type to specific appointment type based on time
     let appointmentSlotType = slotType;
@@ -218,14 +217,25 @@ router.post('/book', [
     
     console.log(`Mapped slot type from "${slotType}" to "${appointmentSlotType}"`);
     
-    const bookingDate = new Date(appointmentDate);
+    let bookingDate = new Date(appointmentDate);
+    
+    // Ensure the date is set to local timezone to avoid timezone shifts
+    if (appointmentDate.includes('T')) {
+      // If ISO string with time component, use as is
+      bookingDate = new Date(appointmentDate);
+    } else {
+      // If date string without time (YYYY-MM-DD), parse as local date and set to noon UTC to avoid timezone shifts
+      const [year, month, day] = appointmentDate.split('-').map(Number);
+      bookingDate = new Date(Date.UTC(year, month - 1, day, 12, 0, 0, 0)); // Noon UTC to avoid timezone shifts
+    }
     
     // Check if the date is in the past
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    bookingDate.setHours(0, 0, 0, 0);
+    const bookingDateLocal = new Date(bookingDate);
+    bookingDateLocal.setHours(0, 0, 0, 0);
     
-    if (bookingDate < today) {
+    if (bookingDateLocal < today) {
       return res.status(400).json({
         success: false,
         message: 'Cannot book appointments for past dates'
@@ -272,6 +282,31 @@ router.post('/book', [
     await appointment.populate('patientId', 'firstName lastName email phone');
     
     console.log(`Appointment successfully created with ID: ${appointment._id}`);
+    
+    // Send booking confirmation email
+    const emailData = {
+      patientEmail: appointment.patientId.email,
+      patientName: `${appointment.patientId.firstName} ${appointment.patientId.lastName}`,
+      doctorName: `Dr. ${appointment.doctorId.firstName} ${appointment.doctorId.lastName}`,
+      specialization: appointment.doctorId.specialization,
+      appointmentDate: appointment.appointmentDate,
+      timeRange: appointment.timeRange,
+      slotType: appointment.slotType,
+      symptoms: appointment.symptoms
+    };
+    
+    // Send email asynchronously (don't wait for completion to avoid delaying response)
+    emailService.sendAppointmentBookingConfirmation(emailData)
+      .then((emailResult) => {
+        if (emailResult.success) {
+          console.log('✅ Booking confirmation email sent successfully');
+        } else {
+          console.error('❌ Failed to send booking confirmation email:', emailResult.error);
+        }
+      })
+      .catch((emailError) => {
+        console.error('❌ Error sending booking confirmation email:', emailError);
+      });
     
     res.status(201).json({
       success: true,
@@ -326,18 +361,27 @@ router.get('/my-appointments', authenticatePatient, async (req, res) => {
       .sort({ appointmentDate: 1, startTime: 1 })
       .limit(parseInt(limit));
     
-    const formattedAppointments = appointments.map(appointment => ({
-      id: appointment._id,
-      doctorName: `Dr. ${appointment.doctorId.firstName} ${appointment.doctorId.lastName}`,
-      specialization: appointment.doctorId.specialization,
-      date: appointment.formattedDate,
-      appointmentDate: appointment.appointmentDate.toISOString().split('T')[0],
-      timeRange: appointment.timeRange,
-      slotType: appointment.slotType,
-      status: appointment.status,
-      symptoms: appointment.symptoms,
-      bookingDate: appointment.bookingDate
-    }));
+    const formattedAppointments = appointments.map(appointment => {
+      // Format date properly for frontend using UTC components
+      const year = appointment.appointmentDate.getUTCFullYear();
+      const month = String(appointment.appointmentDate.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(appointment.appointmentDate.getUTCDate()).padStart(2, '0');
+      const formattedDateString = `${year}-${month}-${day}`;
+      
+      return {
+        id: appointment._id,
+        doctorId: appointment.doctorId._id,
+        doctorName: `Dr. ${appointment.doctorId.firstName} ${appointment.doctorId.lastName}`,
+        specialization: appointment.doctorId.specialization,
+        date: appointment.formattedDate,
+        appointmentDate: formattedDateString,
+        timeRange: appointment.timeRange,
+        slotType: appointment.slotType,
+        status: appointment.status,
+        symptoms: appointment.symptoms,
+        bookingDate: appointment.bookingDate
+      };
+    });
     
     res.json({
       success: true,
@@ -412,7 +456,8 @@ router.patch('/cancel/:appointmentId', authenticatePatient, async (req, res) => 
       _id: appointmentId,
       patientId,
       status: { $in: ['scheduled', 'confirmed'] }
-    });
+    }).populate('doctorId', 'firstName lastName specialization email')
+      .populate('patientId', 'firstName lastName email phone');
     
     if (!appointment) {
       return res.status(404).json({
@@ -433,8 +478,32 @@ router.patch('/cancel/:appointmentId', authenticatePatient, async (req, res) => 
       });
     }
     
+    // Store appointment data for email before cancellation
+    const emailData = {
+      patientEmail: appointment.patientId.email,
+      patientName: `${appointment.patientId.firstName} ${appointment.patientId.lastName}`,
+      doctorName: `Dr. ${appointment.doctorId.firstName} ${appointment.doctorId.lastName}`,
+      specialization: appointment.doctorId.specialization,
+      appointmentDate: appointment.appointmentDate,
+      timeRange: appointment.timeRange,
+      slotType: appointment.slotType
+    };
+    
     appointment.status = 'cancelled';
     await appointment.save();
+    
+    // Send cancellation notification email
+    emailService.sendAppointmentCancellationNotification(emailData)
+      .then((emailResult) => {
+        if (emailResult.success) {
+          console.log('✅ Cancellation notification email sent successfully');
+        } else {
+          console.error('❌ Failed to send cancellation notification email:', emailResult.error);
+        }
+      })
+      .catch((emailError) => {
+        console.error('❌ Error sending cancellation notification email:', emailError);
+      });
     
     res.json({
       success: true,
@@ -446,6 +515,139 @@ router.patch('/cancel/:appointmentId', authenticatePatient, async (req, res) => 
     res.status(500).json({
       success: false,
       message: 'Error cancelling appointment',
+      error: error.message
+    });
+  }
+});
+
+// Reschedule appointment (for patients)
+router.patch('/reschedule/:appointmentId', [
+  authenticatePatient,
+  body('newDate').isISO8601().withMessage('Valid new date is required'),
+  body('newStartTime').matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/).withMessage('Valid new start time is required (HH:MM format)'),
+  body('newEndTime').matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/).withMessage('Valid new end time is required (HH:MM format)'),
+  body('newSlotType').notEmpty().withMessage('New slot type is required')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array()
+      });
+    }
+
+    const { appointmentId } = req.params;
+    const { newDate, newStartTime, newEndTime, newSlotType } = req.body;
+    const patientId = req.user._id;
+    
+    // Find the original appointment
+    const originalAppointment = await Appointment.findOne({
+      _id: appointmentId,
+      patientId,
+      status: { $in: ['scheduled', 'confirmed'] }
+    }).populate('doctorId', 'firstName lastName specialization email')
+      .populate('patientId', 'firstName lastName email phone');
+    
+    if (!originalAppointment) {
+      return res.status(404).json({
+        success: false,
+        message: 'Appointment not found or cannot be rescheduled'
+      });
+    }
+    
+    // Check if original appointment is at least 2 hours in the future
+    const originalDateTime = new Date(`${originalAppointment.appointmentDate.toISOString().split('T')[0]}T${originalAppointment.startTime}`);
+    const twoHoursFromNow = new Date();
+    twoHoursFromNow.setHours(twoHoursFromNow.getHours() + 2);
+    
+    if (originalDateTime < twoHoursFromNow) {
+      return res.status(400).json({
+        success: false,
+        message: 'Appointments can only be rescheduled at least 2 hours in advance'
+      });
+    }
+    
+    // Parse the new date properly to avoid timezone issues
+    let newAppointmentDate;
+    if (newDate.includes('T')) {
+      newAppointmentDate = new Date(newDate);
+    } else {
+      const [year, month, day] = newDate.split('-').map(Number);
+      newAppointmentDate = new Date(Date.UTC(year, month - 1, day, 12, 0, 0, 0)); // Noon UTC to avoid timezone shifts
+    }
+    
+    // Check if the new slot is still available
+    const isAvailable = await Appointment.isSlotAvailable(originalAppointment.doctorId._id, newAppointmentDate, newStartTime, newEndTime);
+    
+    if (!isAvailable) {
+      return res.status(409).json({
+        success: false,
+        message: 'New time slot not available. Another patient may have booked it.'
+      });
+    }
+    
+    // Store original appointment data for email
+    const oldAppointmentData = {
+      date: originalAppointment.appointmentDate,
+      timeRange: originalAppointment.timeRange
+    };
+    
+    // Update the appointment with new details
+    originalAppointment.appointmentDate = newAppointmentDate;
+    originalAppointment.startTime = newStartTime;
+    originalAppointment.endTime = newEndTime;
+    originalAppointment.slotType = newSlotType;
+    originalAppointment.status = 'scheduled'; // Reset status if it was confirmed
+    
+    await originalAppointment.save();
+    
+    // Send reschedule notification email
+    const emailData = {
+      patientEmail: originalAppointment.patientId.email,
+      patientName: `${originalAppointment.patientId.firstName} ${originalAppointment.patientId.lastName}`,
+      doctorName: `Dr. ${originalAppointment.doctorId.firstName} ${originalAppointment.doctorId.lastName}`,
+      specialization: originalAppointment.doctorId.specialization,
+      oldDate: oldAppointmentData.date,
+      oldTimeRange: oldAppointmentData.timeRange,
+      newDate: originalAppointment.appointmentDate,
+      newTimeRange: originalAppointment.timeRange,
+      slotType: originalAppointment.slotType,
+      symptoms: originalAppointment.symptoms
+    };
+    
+    emailService.sendAppointmentRescheduleNotification(emailData)
+      .then((emailResult) => {
+        if (emailResult.success) {
+          console.log('✅ Reschedule notification email sent successfully');
+        } else {
+          console.error('❌ Failed to send reschedule notification email:', emailResult.error);
+        }
+      })
+      .catch((emailError) => {
+        console.error('❌ Error sending reschedule notification email:', emailError);
+      });
+    
+    res.json({
+      success: true,
+      message: 'Appointment rescheduled successfully',
+      appointment: {
+        id: originalAppointment._id,
+        doctorName: `Dr. ${originalAppointment.doctorId.firstName} ${originalAppointment.doctorId.lastName}`,
+        specialization: originalAppointment.doctorId.specialization,
+        date: originalAppointment.formattedDate,
+        timeRange: originalAppointment.timeRange,
+        slotType: originalAppointment.slotType,
+        status: originalAppointment.status
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error rescheduling appointment:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error rescheduling appointment',
       error: error.message
     });
   }
