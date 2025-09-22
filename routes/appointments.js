@@ -402,33 +402,74 @@ router.get('/my-appointments', authenticatePatient, async (req, res) => {
 // Get doctor's appointments (for doctor dashboard)
 router.get('/doctor/my-appointments', doctorAuth, async (req, res) => {
   try {
-    const doctorId = req.user.doctorId;
-    const { limit = 10, status = 'scheduled' } = req.query;
+    console.log('Doctor object from middleware:', req.doctor);
+    const doctorId = req.doctor._id;
+    console.log('Doctor ID:', doctorId);
+    const { limit = 20, status = 'all', date = null } = req.query;
     
     let filter = { doctorId };
     
+    // Filter by status
     if (status !== 'all') {
-      filter.status = status;
+      if (status === 'pending') {
+        filter.status = { $in: ['scheduled', 'confirmed'] };
+      } else {
+        filter.status = status;
+      }
+    }
+    
+    // Filter by date if specified
+    if (date) {
+      const [year, month, day] = date.split('-').map(Number);
+      const startDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+      const endDate = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
+      filter.appointmentDate = { $gte: startDate, $lte: endDate };
     }
     
     const appointments = await Appointment.find(filter)
-      .populate('patientId', 'firstName lastName email phone')
+      .populate('patientId', 'firstName lastName email phone dateOfBirth')
       .sort({ appointmentDate: 1, startTime: 1 })
       .limit(parseInt(limit));
     
-    const formattedAppointments = appointments.map(appointment => ({
-      id: appointment._id,
-      patientName: `${appointment.patientId.firstName} ${appointment.patientId.lastName}`,
-      patientEmail: appointment.patientId.email,
-      patientPhone: appointment.patientId.phone,
-      date: appointment.formattedDate,
-      appointmentDate: appointment.appointmentDate.toISOString().split('T')[0],
-      timeRange: appointment.timeRange,
-      slotType: appointment.slotType,
-      status: appointment.status,
-      symptoms: appointment.symptoms,
-      bookingDate: appointment.bookingDate
-    }));
+    // Format date properly for frontend using UTC components
+    const formattedAppointments = appointments.map(appointment => {
+      const year = appointment.appointmentDate.getUTCFullYear();
+      const month = String(appointment.appointmentDate.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(appointment.appointmentDate.getUTCDate()).padStart(2, '0');
+      const formattedDateString = `${year}-${month}-${day}`;
+      
+      // Calculate patient age if dateOfBirth is available
+      let age = null;
+      if (appointment.patientId.dateOfBirth) {
+        const birthDate = new Date(appointment.patientId.dateOfBirth);
+        const today = new Date();
+        age = today.getFullYear() - birthDate.getFullYear();
+        const monthDiff = today.getMonth() - birthDate.getMonth();
+        if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+          age--;
+        }
+      }
+      
+      return {
+        id: appointment._id,
+        patientId: appointment.patientId._id,
+        patientName: `${appointment.patientId.firstName} ${appointment.patientId.lastName}`,
+        patientEmail: appointment.patientId.email,
+        patientPhone: appointment.patientId.phone,
+        patientAge: age,
+        date: appointment.formattedDate,
+        appointmentDate: formattedDateString,
+        timeRange: appointment.timeRange,
+        startTime: appointment.startTime,
+        endTime: appointment.endTime,
+        slotType: appointment.slotType,
+        status: appointment.status,
+        symptoms: appointment.symptoms,
+        notes: appointment.notes,
+        bookingDate: appointment.bookingDate,
+        isEmergency: appointment.isEmergency || false
+      };
+    });
     
     res.json({
       success: true,
@@ -648,6 +689,171 @@ router.patch('/reschedule/:appointmentId', [
     res.status(500).json({
       success: false,
       message: 'Error rescheduling appointment',
+      error: error.message
+    });
+  }
+});
+
+// Start appointment (doctor action)
+router.patch('/doctor/start/:appointmentId', doctorAuth, async (req, res) => {
+  try {
+    const { appointmentId } = req.params;
+    const doctorId = req.doctor._id;
+    
+    const appointment = await Appointment.findOne({
+      _id: appointmentId,
+      doctorId,
+      status: { $in: ['scheduled', 'confirmed'] }
+    }).populate('patientId', 'firstName lastName email');
+    
+    if (!appointment) {
+      return res.status(404).json({
+        success: false,
+        message: 'Appointment not found or cannot be started'
+      });
+    }
+    
+    // Update appointment status to confirmed (started)
+    appointment.status = 'confirmed';
+    await appointment.save();
+    
+    res.json({
+      success: true,
+      message: 'Appointment started successfully',
+      appointment: {
+        id: appointment._id,
+        status: appointment.status,
+        patientName: `${appointment.patientId.firstName} ${appointment.patientId.lastName}`
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error starting appointment:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error starting appointment',
+      error: error.message
+    });
+  }
+});
+
+// Complete appointment (doctor action)
+router.patch('/doctor/complete/:appointmentId', [
+  doctorAuth,
+  body('notes').optional().trim().isLength({ max: 1000 }).withMessage('Notes must be less than 1000 characters')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array()
+      });
+    }
+    
+    const { appointmentId } = req.params;
+    const { notes } = req.body;
+    const doctorId = req.doctor._id;
+    
+    const appointment = await Appointment.findOne({
+      _id: appointmentId,
+      doctorId,
+      status: { $in: ['confirmed', 'scheduled'] }
+    }).populate('patientId', 'firstName lastName email');
+    
+    if (!appointment) {
+      return res.status(404).json({
+        success: false,
+        message: 'Appointment not found or cannot be completed'
+      });
+    }
+    
+    // Update appointment status and notes
+    appointment.status = 'completed';
+    if (notes) {
+      appointment.notes = notes;
+    }
+    await appointment.save();
+    
+    res.json({
+      success: true,
+      message: 'Appointment completed successfully',
+      appointment: {
+        id: appointment._id,
+        status: appointment.status,
+        notes: appointment.notes,
+        patientName: `${appointment.patientId.firstName} ${appointment.patientId.lastName}`
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error completing appointment:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error completing appointment',
+      error: error.message
+    });
+  }
+});
+
+// Update appointment details (doctor action)
+router.patch('/doctor/update/:appointmentId', [
+  doctorAuth,
+  body('notes').optional().trim().isLength({ max: 1000 }).withMessage('Notes must be less than 1000 characters'),
+  body('symptoms').optional().trim().isLength({ max: 500 }).withMessage('Symptoms must be less than 500 characters'),
+  body('isEmergency').optional().isBoolean().withMessage('Emergency flag must be boolean')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array()
+      });
+    }
+    
+    const { appointmentId } = req.params;
+    const { notes, symptoms, isEmergency } = req.body;
+    const doctorId = req.doctor._id;
+    
+    const appointment = await Appointment.findOne({
+      _id: appointmentId,
+      doctorId
+    }).populate('patientId', 'firstName lastName email');
+    
+    if (!appointment) {
+      return res.status(404).json({
+        success: false,
+        message: 'Appointment not found'
+      });
+    }
+    
+    // Update appointment details
+    if (notes !== undefined) appointment.notes = notes;
+    if (symptoms !== undefined) appointment.symptoms = symptoms;
+    if (isEmergency !== undefined) appointment.isEmergency = isEmergency;
+    
+    await appointment.save();
+    
+    res.json({
+      success: true,
+      message: 'Appointment updated successfully',
+      appointment: {
+        id: appointment._id,
+        notes: appointment.notes,
+        symptoms: appointment.symptoms,
+        isEmergency: appointment.isEmergency,
+        patientName: `${appointment.patientId.firstName} ${appointment.patientId.lastName}`
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error updating appointment:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error updating appointment',
       error: error.message
     });
   }
