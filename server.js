@@ -22,6 +22,7 @@ const pharmacistAuthRoutes = require('./routes/pharmacistAuth');
 const scheduleRoutes = require('./routes/schedules');
 const appointmentRoutes = require('./routes/appointments');
 const medicineRoutes = require('./routes/medicines');
+const prescriptionRoutes = require('./routes/prescriptions');
 const { verifyCloudinaryConfig } = require('./config/cloudinary');
 
 // Initialize passport configuration
@@ -52,6 +53,8 @@ app.use('/api/pharmacist-auth', pharmacistAuthRoutes);
 app.use('/api/schedules', scheduleRoutes);
 app.use('/api/appointments', appointmentRoutes);
 app.use('/api/medicines', medicineRoutes);
+app.use('/api/prescriptions', prescriptionRoutes);
+app.use('/api/test', require('./routes/test')); // Test routes
 
 // MongoDB connection
 mongoose.connect(process.env.MONGODB_URI)
