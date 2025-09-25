@@ -6,6 +6,8 @@ const Schedule = require('../models/Schedule');
 const Appointment = require('../models/Appointment');
 const { uploadSingle, handleUploadResponse } = require('../middleware/cloudinaryUpload');
 const { deleteImage } = require('../config/cloudinary');
+const emailService = require('../services/emailService');
+const { generateDoctorPassword } = require('../utils/passwordGenerator');
 
 // Helper function to get next available slot for a doctor
 const getNextAvailableSlot = async (doctorId) => {
@@ -181,7 +183,6 @@ router.post('/', uploadSingle('profileImage'), handleUploadResponse, [
   body('firstName').trim().notEmpty().withMessage('First name is required'),
   body('lastName').trim().notEmpty().withMessage('Last name is required'),
   body('email').isEmail().withMessage('Valid email is required'),
-  body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
   body('phone').trim().notEmpty().withMessage('Phone number is required'),
   body('dateOfBirth').isISO8601().withMessage('Valid date of birth is required'),
   body('gender').isIn(['male', 'female', 'other']).withMessage('Valid gender is required'),
@@ -200,7 +201,7 @@ router.post('/', uploadSingle('profileImage'), handleUploadResponse, [
     }
 
     const {
-      firstName, lastName, email, password, phone, dateOfBirth,
+      firstName, lastName, email, phone, dateOfBirth,
       gender, specialization, experience, position, bio
     } = req.body;
 
@@ -213,12 +214,31 @@ router.post('/', uploadSingle('profileImage'), handleUploadResponse, [
       });
     }
 
-    // Create doctor data
+    // Generate secure password for the doctor
+    const generatedPassword = generateDoctorPassword();
+
+    // Try to send email with credentials first
+    const emailResult = await emailService.sendDoctorCredentialsEmail(
+      email, 
+      `${firstName} ${lastName}`, 
+      generatedPassword
+    );
+
+    // If email sending fails, don't create the doctor account
+    if (!emailResult.success) {
+      return res.status(400).json({
+        success: false,
+        message: 'Failed to send credentials email. Please verify the email address exists and try again.',
+        error: emailResult.error
+      });
+    }
+
+    // Create doctor data with generated password
     const doctorData = {
       firstName,
       lastName,
       email,
-      password,
+      password: generatedPassword, // This will be hashed by the Doctor schema pre-save middleware
       phone,
       dateOfBirth,
       gender,
@@ -236,9 +256,15 @@ router.post('/', uploadSingle('profileImage'), handleUploadResponse, [
     const doctor = new Doctor(doctorData);
     await doctor.save();
 
+    // Log success message for admin
+    console.log(`📧 Doctor credentials sent successfully to: ${email}`);
+    if (emailResult.previewUrl) {
+      console.log(`🔗 Email preview URL: ${emailResult.previewUrl}`);
+    }
+
     res.status(201).json({
       success: true,
-      message: 'Doctor added successfully',
+      message: 'Doctor added successfully! Login credentials have been sent to the provided email address.',
       data: {
         doctor: {
           id: doctor._id,
@@ -250,9 +276,12 @@ router.post('/', uploadSingle('profileImage'), handleUploadResponse, [
           position: doctor.position,
           profileImage: doctor.profileImage,
           availability: doctor.availability
-        }
+        },
+        emailSent: true,
+        emailPreviewUrl: emailResult.previewUrl // For development/testing
       }
     });
+
   } catch (error) {
     console.error('Error adding doctor:', error);
     res.status(500).json({

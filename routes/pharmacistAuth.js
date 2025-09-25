@@ -27,14 +27,24 @@ router.post('/login', [
 
     const { email, password } = req.body;
 
+    console.log('🔍 Pharmacist login attempt:', { email, passwordLength: password?.length });
+
     // Find pharmacist by email
     const pharmacist = await Pharmacist.findOne({ email });
     if (!pharmacist) {
+      console.log('❌ Pharmacist not found for email:', email);
       return res.status(401).json({
         success: false,
         message: 'Invalid email or password'
       });
     }
+
+    console.log('✅ Pharmacist found:', { 
+      id: pharmacist._id, 
+      email: pharmacist.email, 
+      hasPassword: !!pharmacist.password,
+      availability: pharmacist.availability 
+    });
 
     // Check if pharmacist is active
     if (pharmacist.availability !== 'Active') {
@@ -45,13 +55,19 @@ router.post('/login', [
     }
 
     // Verify password
+    console.log('🔐 Verifying password...');
     const isPasswordValid = await bcrypt.compare(password, pharmacist.password);
+    console.log('🔐 Password verification result:', isPasswordValid);
+    
     if (!isPasswordValid) {
+      console.log('❌ Password verification failed');
       return res.status(401).json({
         success: false,
         message: 'Invalid email or password'
       });
     }
+
+    console.log('✅ Login successful for:', pharmacist.email);
 
     // Update last login
     pharmacist.lastLogin = new Date();

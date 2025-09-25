@@ -988,6 +988,266 @@ Neurodent Clinic
       };
     }
   }
+
+  // Send Doctor Credentials Email
+  async sendDoctorCredentialsEmail(email, doctorName, password) {
+    try {
+      if (!this.transporter) {
+        throw new Error('Email transporter not initialized');
+      }
+
+      const isRealEmail = process.env.EMAIL_USER && 
+                         process.env.EMAIL_PASS && 
+                         process.env.EMAIL_USER !== 'YOUR_SENDER_GMAIL@gmail.com' &&
+                         process.env.EMAIL_PASS !== 'YOUR_16_CHARACTER_APP_PASSWORD';
+
+      const mailOptions = {
+        from: `"Neurodent System" <${process.env.EMAIL_USER || 'noreply@neurodent.com'}>`,
+        to: email,
+        subject: '🦷 Welcome to Neurodent - Your Doctor Account Credentials',
+        html: this.generateDoctorCredentialsEmailTemplate(doctorName, email, password)
+      };
+
+      const info = await this.transporter.sendMail(mailOptions);
+
+      if (!isRealEmail) {
+        console.log('📧 Doctor credentials email sent to test account');
+        console.log('🔗 Preview URL:', nodemailer.getTestMessageUrl(info));
+        console.log('📋 Test Credentials - Email:', email, 'Password:', password);
+      } else {
+        console.log('📧 Doctor credentials email sent successfully to:', email);
+      }
+
+      return {
+        success: true,
+        messageId: info.messageId,
+        previewUrl: !isRealEmail ? nodemailer.getTestMessageUrl(info) : null,
+        isRealEmail: isRealEmail
+      };
+
+    } catch (error) {
+      console.error('❌ Failed to send doctor credentials email:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  // Send Pharmacist Credentials Email
+  async sendPharmacistCredentialsEmail(email, pharmacistName, password) {
+    try {
+      if (!this.transporter) {
+        throw new Error('Email transporter not initialized');
+      }
+
+      const isRealEmail = process.env.EMAIL_USER && 
+                         process.env.EMAIL_PASS && 
+                         process.env.EMAIL_USER !== 'YOUR_SENDER_GMAIL@gmail.com' &&
+                         process.env.EMAIL_PASS !== 'YOUR_16_CHARACTER_APP_PASSWORD';
+
+      const mailOptions = {
+        from: `"Neurodent System" <${process.env.EMAIL_USER || 'noreply@neurodent.com'}>`,
+        to: email,
+        subject: '💊 Welcome to Neurodent - Your Pharmacist Account Credentials',
+        html: this.generatePharmacistCredentialsEmailTemplate(pharmacistName, email, password)
+      };
+
+      const info = await this.transporter.sendMail(mailOptions);
+
+      if (!isRealEmail) {
+        console.log('📧 Pharmacist credentials email sent to test account');
+        console.log('🔗 Preview URL:', nodemailer.getTestMessageUrl(info));
+        console.log('📋 Test Credentials - Email:', email, 'Password:', password);
+      } else {
+        console.log('📧 Pharmacist credentials email sent successfully to:', email);
+      }
+
+      return {
+        success: true,
+        messageId: info.messageId,
+        previewUrl: !isRealEmail ? nodemailer.getTestMessageUrl(info) : null,
+        isRealEmail: isRealEmail
+      };
+
+    } catch (error) {
+      console.error('❌ Failed to send pharmacist credentials email:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  // Generate Doctor Credentials Email Template
+  generateDoctorCredentialsEmailTemplate(doctorName, email, password) {
+    return `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Doctor Account Created - Neurodent</title>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+          .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+          .credentials-box { background: #fff; border: 2px solid #667eea; border-radius: 8px; padding: 20px; margin: 20px 0; }
+          .credential-row { display: flex; justify-content: space-between; align-items: center; margin: 10px 0; padding: 10px; background: #f0f4ff; border-radius: 5px; }
+          .credential-label { font-weight: bold; color: #667eea; }
+          .credential-value { font-family: monospace; background: #333; color: #fff; padding: 5px 10px; border-radius: 3px; }
+          .warning { background: #fff3cd; border: 1px solid #ffeaa7; color: #856404; padding: 15px; border-radius: 5px; margin: 20px 0; }
+          .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #666; }
+          .button { display: inline-block; background: #667eea; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; margin: 10px 0; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>🦷 Neurodent</h1>
+          <h2>Welcome to Our Team, Dr. ${doctorName}!</h2>
+        </div>
+        
+        <div class="content">
+          <p>Dear Dr. ${doctorName},</p>
+          
+          <p>Congratulations! Your doctor account has been successfully created in the Neurodent system. You can now access your dashboard using the credentials below:</p>
+          
+          <div class="credentials-box">
+            <h3>🔐 Login Credentials</h3>
+            <div class="credential-row">
+              <span class="credential-label">Email:</span>
+              <span class="credential-value">${email}</span>
+            </div>
+            <div class="credential-row">
+              <span class="credential-label">Password:</span>
+              <span class="credential-value">${password}</span>
+            </div>
+          </div>
+          
+          <div class="warning">
+            <strong>⚠️ Important Security Notice:</strong>
+            <ul>
+              <li>Please change your password after your first login</li>
+              <li>Do not share your login credentials with anyone</li>
+              <li>Always log out when using shared computers</li>
+              <li>Keep this email secure and delete it after changing your password</li>
+            </ul>
+          </div>
+          
+          <p><strong>Next Steps:</strong></p>
+          <ol>
+            <li>Visit the doctor login page</li>
+            <li>Enter your email and the provided password</li>
+            <li>Complete your profile information</li>
+            <li>Change your password to something memorable</li>
+            <li>Start managing your appointments and patients</li>
+          </ol>
+          
+          <p>If you have any questions or need assistance, please don't hesitate to contact our admin team.</p>
+          
+          <p>Welcome aboard!</p>
+          
+          <p>Best regards,<br>
+          <strong>Neurodent Administration Team</strong></p>
+        </div>
+        
+        <div class="footer">
+          <p>This email contains sensitive information. Please handle it securely.</p>
+          <p>&copy; 2024 Neurodent. All rights reserved.</p>
+        </div>
+      </body>
+      </html>
+    `;
+  }
+
+  // Generate Pharmacist Credentials Email Template
+  generatePharmacistCredentialsEmailTemplate(pharmacistName, email, password) {
+    return `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Pharmacist Account Created - Neurodent</title>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+          .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+          .credentials-box { background: #fff; border: 2px solid #28a745; border-radius: 8px; padding: 20px; margin: 20px 0; }
+          .credential-row { display: flex; justify-content: space-between; align-items: center; margin: 10px 0; padding: 10px; background: #f0fff4; border-radius: 5px; }
+          .credential-label { font-weight: bold; color: #28a745; }
+          .credential-value { font-family: monospace; background: #333; color: #fff; padding: 5px 10px; border-radius: 3px; }
+          .warning { background: #fff3cd; border: 1px solid #ffeaa7; color: #856404; padding: 15px; border-radius: 5px; margin: 20px 0; }
+          .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #666; }
+          .button { display: inline-block; background: #28a745; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; margin: 10px 0; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>💊 Neurodent</h1>
+          <h2>Welcome to Our Team, ${pharmacistName}!</h2>
+        </div>
+        
+        <div class="content">
+          <p>Dear ${pharmacistName},</p>
+          
+          <p>Congratulations! Your pharmacist account has been successfully created in the Neurodent system. You can now access your pharmacy dashboard using the credentials below:</p>
+          
+          <div class="credentials-box">
+            <h3>🔐 Login Credentials</h3>
+            <div class="credential-row">
+              <span class="credential-label">Email:</span>
+              <span class="credential-value">${email}</span>
+            </div>
+            <div class="credential-row">
+              <span class="credential-label">Password:</span>
+              <span class="credential-value">${password}</span>
+            </div>
+          </div>
+          
+          <div class="warning">
+            <strong>⚠️ Important Security Notice:</strong>
+            <ul>
+              <li>Please change your password after your first login</li>
+              <li>Do not share your login credentials with anyone</li>
+              <li>Always log out when using shared computers</li>
+              <li>Keep this email secure and delete it after changing your password</li>
+            </ul>
+          </div>
+          
+          <p><strong>Next Steps:</strong></p>
+          <ol>
+            <li>Visit the pharmacist login page</li>
+            <li>Enter your email and the provided password</li>
+            <li>Complete your profile information</li>
+            <li>Change your password to something memorable</li>
+            <li>Start managing prescriptions and pharmacy operations</li>
+          </ol>
+          
+          <p><strong>Your Responsibilities:</strong></p>
+          <ul>
+            <li>📋 Review and fulfill prescription orders</li>
+            <li>💊 Manage medicine inventory</li>
+            <li>📊 Track dispensed medications</li>
+            <li>👥 Coordinate with doctors and patients</li>
+          </ul>
+          
+          <p>If you have any questions or need assistance, please don't hesitate to contact our admin team.</p>
+          
+          <p>Welcome to the Neurodent family!</p>
+          
+          <p>Best regards,<br>
+          <strong>Neurodent Administration Team</strong></p>
+        </div>
+        
+        <div class="footer">
+          <p>This email contains sensitive information. Please handle it securely.</p>
+          <p>&copy; 2024 Neurodent. All rights reserved.</p>
+        </div>
+      </body>
+      </html>
+    `;
+  }
 }
 
 module.exports = new EmailService();

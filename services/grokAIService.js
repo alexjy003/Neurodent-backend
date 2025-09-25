@@ -2,9 +2,13 @@ const axios = require('axios');
 
 class GrokAIService {
   constructor() {
-    this.apiKey = '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';
+    // Use environment variable or fallback to working API key
+    this.apiKey = process.env.GROK_API_KEY || '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';
     this.baseUrl = 'https://openrouter.ai/api/v1';
-    this.model = 'x-ai/grok-4-fast:free';
+    // Use a more reliable model
+    this.model = process.env.GROK_MODEL || 'openai/gpt-3.5-turbo';
+    
+    console.log('🤖 Grok AI Service initialized with model:', this.model);
   }
 
   async generatePrescription(patientData) {
@@ -64,45 +68,53 @@ class GrokAIService {
 
   createPrescriptionPrompt(symptoms, patientName, patientAge, medicalHistory, allergies) {
     return `
-Generate a dental prescription for the following patient:
+You are a dental AI assistant. Create a unique, personalized dental prescription for this specific patient and their symptoms.
 
-Patient Information:
+PATIENT DETAILS:
 - Name: ${patientName}
 - Age: ${patientAge} years
-- Symptoms: ${symptoms}
+- Specific Symptoms: ${symptoms}
 - Medical History: ${medicalHistory || 'None reported'}
 - Allergies: ${allergies || 'None reported'}
 
-Please provide a comprehensive dental prescription in the following JSON format ONLY:
+IMPORTANT: Generate a UNIQUE prescription specifically tailored to these symptoms. Do NOT use generic responses.
 
+Analyze the symptoms and provide appropriate treatment:
+
+SYMPTOM-SPECIFIC GUIDELINES:
+- Toothache/Sharp pain: Focus on pain relief (NSAIDs) and possible antibiotics if infection suspected
+- Gum bleeding/swelling: Antiseptic mouthwash, anti-inflammatory medication
+- Wisdom tooth pain: Strong pain relief, antibiotics if impacted
+- Post-extraction: Pain management, antibiotics, wound care
+- Sensitive teeth: Desensitizing agents, gentle care instructions
+- Jaw pain: Muscle relaxants, anti-inflammatory medications
+- Oral ulcers: Topical treatments, pain relief, healing aids
+- Bad breath: Antimicrobial treatments, oral hygiene focus
+
+AGE-SPECIFIC DOSING:
+- Under 18: Pediatric doses, avoid certain medications
+- 18-65: Standard adult doses
+- Over 65: Consider reduced doses, drug interactions
+
+Return ONLY valid JSON in this exact format:
 {
-  "diagnosis": "Primary dental diagnosis based on symptoms",
+  "diagnosis": "Specific diagnosis based on the symptoms described",
   "medications": [
     {
-      "name": "Medication name with strength",
-      "dosage": "How much to take",
-      "duration": "How long to take it",
-      "instructions": "Special instructions",
-      "frequency": "How often"
+      "name": "Specific medication name with strength (e.g., Ibuprofen 600mg)",
+      "dosage": "Exact amount (e.g., 1 tablet)",
+      "duration": "Treatment duration (e.g., 5 days)",
+      "instructions": "Specific instructions for this medication",
+      "frequency": "How often (e.g., Every 8 hours)"
     }
   ],
-  "generalInstructions": "General care instructions and precautions",
-  "followUpRecommendation": "Follow-up timeline (in days from now)",
-  "warnings": "Important warnings or contraindications",
-  "homeRemedies": "Safe home remedies to complement treatment"
+  "generalInstructions": "Specific care instructions for these symptoms",
+  "followUpRecommendation": "Follow-up timeline in days (e.g., 3 days, 1 week)",
+  "warnings": "Specific warnings related to these medications and symptoms",
+  "homeRemedies": "Safe home remedies specific to these symptoms"
 }
 
-Guidelines:
-1. Focus on common dental conditions (toothache, gum inflammation, post-procedure care, etc.)
-2. Recommend appropriate pain management (ibuprofen, acetaminophen)
-3. Include antibiotics only if infection is suspected
-4. Suggest antiseptic mouthwash for oral hygiene
-5. Consider patient age for dosage recommendations
-6. Include dietary restrictions if relevant
-7. Provide realistic follow-up timeline
-8. Always include safety warnings
-
-Return ONLY valid JSON, no additional text or explanations.`;
+CRITICAL: Make this prescription UNIQUE to the symptoms "${symptoms}". Do not provide generic responses.`;
   }
 
   parseAIResponse(aiResponse) {
@@ -166,40 +178,154 @@ Return ONLY valid JSON, no additional text or explanations.`;
   }
 
   getFallbackPrescription(patientData) {
-    const { symptoms } = patientData;
+    const { symptoms, patientAge } = patientData;
+    const symptomsLower = symptoms.toLowerCase();
     
-    // Simple keyword-based fallback
-    let diagnosis = 'Dental discomfort';
-    let medications = [
-      {
-        name: 'Ibuprofen 400mg',
-        dosage: '1 tablet',
-        duration: '3-5 days',
-        instructions: 'Take with food',
-        frequency: 'Every 6-8 hours as needed'
-      }
-    ];
+    let diagnosis = 'Dental consultation required';
+    let medications = [];
+    let generalInstructions = 'Maintain good oral hygiene.';
+    let warnings = 'Contact dentist if symptoms persist.';
+    let homeRemedies = 'Salt water rinse twice daily.';
+    let followUpDays = 7;
 
-    if (symptoms.toLowerCase().includes('pain') || symptoms.toLowerCase().includes('ache')) {
-      diagnosis = 'Dental pain management';
-      medications.push({
-        name: 'Acetaminophen 500mg',
-        dosage: '1-2 tablets',
-        duration: '3-5 days',
-        instructions: 'Can be taken with ibuprofen',
-        frequency: 'Every 4-6 hours as needed'
-      });
+    // Symptom-specific prescriptions
+    if (symptomsLower.includes('severe pain') || symptomsLower.includes('throbbing')) {
+      diagnosis = 'Acute dental pain';
+      medications = [
+        {
+          name: 'Ibuprofen 600mg',
+          dosage: '1 tablet',
+          duration: '5 days',
+          instructions: 'Take with food to prevent stomach upset',
+          frequency: 'Every 8 hours'
+        },
+        {
+          name: 'Acetaminophen 500mg',
+          dosage: '2 tablets',
+          duration: '5 days',
+          instructions: 'Can alternate with ibuprofen every 4 hours',
+          frequency: 'Every 6 hours'
+        }
+      ];
+      generalInstructions = 'Avoid chewing on affected side. Apply cold compress for 15 minutes at a time.';
+      followUpDays = 2;
+    }
+    else if (symptomsLower.includes('gum') && (symptomsLower.includes('bleeding') || symptomsLower.includes('swollen'))) {
+      diagnosis = 'Gum inflammation (Gingivitis)';
+      medications = [
+        {
+          name: 'Chlorhexidine Mouthwash 0.12%',
+          dosage: '15ml',
+          duration: '10 days',
+          instructions: 'Rinse for 30 seconds, do not eat/drink for 30 mins after',
+          frequency: 'Twice daily after brushing'
+        },
+        {
+          name: 'Ibuprofen 400mg',
+          dosage: '1 tablet',
+          duration: '3 days',
+          instructions: 'Take with food',
+          frequency: 'Every 8 hours if needed for pain'
+        }
+      ];
+      generalInstructions = 'Use soft-bristled toothbrush. Gentle flossing daily. Increase vitamin C intake.';
+      homeRemedies = 'Warm salt water rinse 3 times daily. Turmeric paste application.';
+      followUpDays = 10;
+    }
+    else if (symptomsLower.includes('wisdom tooth') || symptomsLower.includes('back tooth')) {
+      diagnosis = 'Wisdom tooth related discomfort';
+      medications = [
+        {
+          name: 'Ibuprofen 600mg',
+          dosage: '1 tablet',
+          duration: '7 days',
+          instructions: 'Take with food, reduces inflammation',
+          frequency: 'Every 8 hours'
+        },
+        {
+          name: 'Amoxicillin 500mg',
+          dosage: '1 capsule',
+          duration: '7 days',
+          instructions: 'Complete full course even if feeling better',
+          frequency: 'Every 8 hours'
+        }
+      ];
+      generalInstructions = 'Soft diet only. No smoking or alcohol. Keep area clean.';
+      warnings = 'Seek immediate care if swelling increases or fever develops.';
+      followUpDays = 3;
+    }
+    else if (symptomsLower.includes('sensitive') || symptomsLower.includes('cold') || symptomsLower.includes('hot')) {
+      diagnosis = 'Dental hypersensitivity';
+      medications = [
+        {
+          name: 'Sensodyne Toothpaste',
+          dosage: 'Pea-sized amount',
+          duration: '2 weeks',
+          instructions: 'Leave on teeth for 2 minutes before rinsing',
+          frequency: 'Twice daily'
+        },
+        {
+          name: 'Fluoride Mouthwash',
+          dosage: '10ml',
+          duration: '2 weeks',
+          instructions: 'Do not rinse with water after use',
+          frequency: 'Once daily at bedtime'
+        }
+      ];
+      generalInstructions = 'Avoid acidic foods/drinks. Use soft toothbrush. Avoid whitening toothpaste.';
+      homeRemedies = 'Clove oil on cotton ball for temporary relief. Avoid extreme temperatures.';
+      followUpDays = 14;
+    }
+    else if (symptomsLower.includes('extraction') || symptomsLower.includes('surgery') || symptomsLower.includes('pulled')) {
+      diagnosis = 'Post-extraction care';
+      medications = [
+        {
+          name: 'Amoxicillin 500mg',
+          dosage: '1 capsule',
+          duration: '7 days',
+          instructions: 'Prevent infection, take with food',
+          frequency: 'Every 8 hours'
+        },
+        {
+          name: 'Ibuprofen 600mg',
+          dosage: '1 tablet',
+          duration: '5 days',
+          instructions: 'Reduces swelling and pain',
+          frequency: 'Every 8 hours with food'
+        }
+      ];
+      generalInstructions = 'No spitting, smoking, or straws for 48 hours. Soft foods only. Gentle rinse after 24 hours.';
+      warnings = 'Watch for dry socket - severe pain after 2-3 days requires immediate attention.';
+      homeRemedies = 'Ice pack for first 24 hours. Warm salt water rinse after 24 hours.';
+      followUpDays = 3;
+    }
+    else {
+      // Generic toothache
+      diagnosis = 'General dental discomfort';
+      medications = [
+        {
+          name: 'Ibuprofen 400mg',
+          dosage: '1-2 tablets',
+          duration: '3 days',
+          instructions: 'Anti-inflammatory, take with food',
+          frequency: 'Every 6-8 hours as needed'
+        }
+      ];
+      generalInstructions = 'Avoid hard foods. Maintain oral hygiene gently.';
+      followUpDays = 5;
     }
 
-    if (symptoms.toLowerCase().includes('gum') || symptoms.toLowerCase().includes('bleeding')) {
-      diagnosis = 'Gum inflammation';
-      medications.push({
-        name: 'Chlorhexidine Mouthwash 0.12%',
-        dosage: '10ml',
-        duration: '7 days',
-        instructions: 'Rinse for 30 seconds, do not swallow',
-        frequency: 'Twice daily after brushing'
-      });
+    // Age-based adjustments
+    if (patientAge < 18) {
+      // Pediatric adjustments
+      medications = medications.map(med => ({
+        ...med,
+        instructions: `PEDIATRIC DOSE - ${med.instructions}. Consult pediatric dentist for exact dosing.`
+      }));
+      warnings = `Age under 18 - all medications require pediatric dosing supervision. ${warnings}`;
+    } else if (patientAge > 65) {
+      // Geriatric considerations
+      warnings = `Age over 65 - monitor for medication interactions. Check with physician if taking other medications. ${warnings}`;
     }
 
     return {
@@ -207,12 +333,12 @@ Return ONLY valid JSON, no additional text or explanations.`;
       data: {
         diagnosis,
         medications,
-        generalInstructions: 'Maintain good oral hygiene. Avoid hard foods. Apply cold compress for swelling.',
-        followUpDays: 7,
-        warnings: 'Contact dentist if symptoms worsen or persist beyond 3 days.',
-        homeRemedies: 'Salt water rinse, avoid hot/cold foods, use soft toothbrush.'
+        generalInstructions,
+        followUpDays,
+        warnings,
+        homeRemedies
       },
-      aiModel: 'fallback',
+      aiModel: 'fallback-enhanced',
       tokensUsed: 0
     };
   }
