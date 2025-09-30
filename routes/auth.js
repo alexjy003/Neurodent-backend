@@ -391,7 +391,7 @@ router.get('/verify', async (req, res) => {
   }
 });
 
-// Forgot password
+// Universal Forgot password (for patients, doctors, and pharmacists)
 router.post('/forgot-password', [
   body('email').isEmail().withMessage('Valid email is required')
 ], async (req, res) => {
@@ -403,39 +403,63 @@ router.post('/forgot-password', [
 
     const { email } = req.body;
 
-    // Find patient by email
-    const patient = await Patient.findOne({ email });
-
     // Always return success message for security (don't reveal if email exists)
     const successMessage = 'If an account with that email exists, we have sent a password reset code.';
 
-    if (!patient) {
+    // Search for user across all user types
+    let user = null;
+    let userType = null;
+
+    // Check in patients first
+    user = await Patient.findOne({ email });
+    if (user) {
+      userType = 'patient';
+    }
+
+    // If not found in patients, check in doctors
+    if (!user) {
+      user = await Doctor.findOne({ email });
+      if (user) {
+        userType = 'doctor';
+      }
+    }
+
+    // If not found in doctors, check in pharmacists
+    if (!user) {
+      user = await Pharmacist.findOne({ email });
+      if (user) {
+        userType = 'pharmacist';
+      }
+    }
+
+    // If user not found in any collection, return success message (for security)
+    if (!user) {
       return res.json({ message: successMessage });
     }
 
-    // Check if patient has a password (not Google-only account)
-    if (!patient.password && patient.googleId) {
+    // Check if patient has Google-only account (only applicable to patients)
+    if (userType === 'patient' && !user.password && user.googleId) {
       return res.status(400).json({
         message: 'This account was created with Google. Please use "Continue with Google" to sign in.'
       });
     }
 
-    // Check if patient account is verified
-    if (!patient.isEmailVerified) {
+    // Check if patient account is verified (only applicable to patients)
+    if (userType === 'patient' && !user.isEmailVerified) {
       return res.status(400).json({
         message: 'Account not verified. Please verify your email first.'
       });
     }
 
     // Generate password reset OTP
-    const otp = patient.generatePasswordResetOTP();
-    await patient.save({ validateBeforeSave: false });
+    const otp = user.generatePasswordResetOTP();
+    await user.save({ validateBeforeSave: false });
 
     // Send password reset OTP email
     const emailResult = await emailService.sendPasswordResetOTP(
-      patient.email,
+      user.email,
       otp,
-      patient.firstName
+      user.firstName
     );
 
     if (!emailResult.success) {
@@ -443,7 +467,7 @@ router.post('/forgot-password', [
       return res.status(500).json({ message: 'Failed to send password reset code. Please try again.' });
     }
 
-    console.log('📧 Password reset OTP sent to:', email);
+    console.log('📧 Password reset OTP sent to:', email, `(${userType})`);
     console.log('🔢 OTP:', otp); // For debugging - remove in production
     if (emailResult.previewUrl) {
       console.log('📧 Preview URL:', emailResult.previewUrl);
@@ -451,6 +475,7 @@ router.post('/forgot-password', [
 
     res.json({
       message: successMessage,
+      userType: userType, // Include user type in response for frontend handling
       ...(process.env.NODE_ENV !== 'production' && emailResult.previewUrl && {
         previewUrl: emailResult.previewUrl
       })
@@ -632,7 +657,7 @@ router.post('/debug-send-otp', async (req, res) => {
   }
 });
 
-// Verify password reset OTP
+// Universal Verify password reset OTP (for patients, doctors, and pharmacists)
 router.post('/verify-password-reset-otp', [
   body('email').isEmail().withMessage('Valid email is required'),
   body('otp').isLength({ min: 6, max: 6 }).withMessage('OTP must be 6 digits')
@@ -645,26 +670,56 @@ router.post('/verify-password-reset-otp', [
 
     const { email, otp } = req.body;
 
-    // Find patient with email and valid OTP
-    const patient = await Patient.findOne({
+    // Search for user across all user types with valid OTP
+    let user = null;
+    let userType = null;
+
+    // Check in patients first
+    user = await Patient.findOne({
       email,
       passwordResetOTPExpires: { $gt: Date.now() }
     });
+    if (user) {
+      userType = 'patient';
+    }
 
-    if (!patient) {
+    // If not found in patients, check in doctors
+    if (!user) {
+      user = await Doctor.findOne({
+        email,
+        passwordResetOTPExpires: { $gt: Date.now() }
+      });
+      if (user) {
+        userType = 'doctor';
+      }
+    }
+
+    // If not found in doctors, check in pharmacists
+    if (!user) {
+      user = await Pharmacist.findOne({
+        email,
+        passwordResetOTPExpires: { $gt: Date.now() }
+      });
+      if (user) {
+        userType = 'pharmacist';
+      }
+    }
+
+    if (!user) {
       return res.status(400).json({ message: 'Invalid or expired reset code' });
     }
 
     // Verify OTP
-    if (!patient.verifyPasswordResetOTP(otp)) {
+    if (!user.verifyPasswordResetOTP(otp)) {
       return res.status(400).json({ message: 'Invalid reset code' });
     }
 
-    console.log('✅ Password reset OTP verified for:', email);
+    console.log('✅ Password reset OTP verified for:', email, `(${userType})`);
 
     res.json({
       message: 'Reset code verified successfully! You can now set a new password.',
-      verified: true
+      verified: true,
+      userType: userType
     });
 
   } catch (error) {
@@ -673,7 +728,7 @@ router.post('/verify-password-reset-otp', [
   }
 });
 
-// Reset password with OTP
+// Universal Reset password with OTP (for patients, doctors, and pharmacists)
 router.post('/reset-password-with-otp', [
   body('email').isEmail().withMessage('Valid email is required'),
   body('otp').isLength({ min: 6, max: 6 }).withMessage('OTP must be 6 digits'),
@@ -687,30 +742,60 @@ router.post('/reset-password-with-otp', [
 
     const { email, otp, newPassword } = req.body;
 
-    // Find patient with email and valid OTP
-    const patient = await Patient.findOne({
+    // Search for user across all user types with valid OTP
+    let user = null;
+    let userType = null;
+
+    // Check in patients first
+    user = await Patient.findOne({
       email,
       passwordResetOTPExpires: { $gt: Date.now() }
     });
+    if (user) {
+      userType = 'patient';
+    }
 
-    if (!patient) {
+    // If not found in patients, check in doctors
+    if (!user) {
+      user = await Doctor.findOne({
+        email,
+        passwordResetOTPExpires: { $gt: Date.now() }
+      });
+      if (user) {
+        userType = 'doctor';
+      }
+    }
+
+    // If not found in doctors, check in pharmacists
+    if (!user) {
+      user = await Pharmacist.findOne({
+        email,
+        passwordResetOTPExpires: { $gt: Date.now() }
+      });
+      if (user) {
+        userType = 'pharmacist';
+      }
+    }
+
+    if (!user) {
       return res.status(400).json({ message: 'Invalid or expired reset code' });
     }
 
     // Verify OTP
-    if (!patient.verifyPasswordResetOTP(otp)) {
+    if (!user.verifyPasswordResetOTP(otp)) {
       return res.status(400).json({ message: 'Invalid reset code' });
     }
 
     // Update password
-    patient.password = newPassword;
-    patient.clearPasswordResetOTP();
-    await patient.save();
+    user.password = newPassword;
+    user.clearPasswordResetOTP();
+    await user.save();
 
-    console.log('✅ Password reset successfully for:', email);
+    console.log('✅ Password reset successfully for:', email, `(${userType})`);
 
     res.json({
-      message: 'Password reset successfully! You can now login with your new password.'
+      message: 'Password reset successfully! You can now login with your new password.',
+      userType: userType
     });
 
   } catch (error) {

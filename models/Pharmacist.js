@@ -70,6 +70,12 @@ const pharmacistSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  passwordResetOTP: {
+    type: String
+  },
+  passwordResetOTPExpires: {
+    type: Date
+  },
   createdAt: {
     type: Date,
     default: Date.now
@@ -109,6 +115,29 @@ pharmacistSchema.methods.updateLastLogin = async function() {
 // Static method to find by email
 pharmacistSchema.statics.findByEmail = function(email) {
   return this.findOne({ email: email.toLowerCase() });
+};
+
+// Generate password reset OTP
+pharmacistSchema.methods.generatePasswordResetOTP = function() {
+  // Generate 6-digit OTP
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+  // Set OTP and expiration (10 minutes)
+  this.passwordResetOTP = otp;
+  this.passwordResetOTPExpires = Date.now() + 10 * 60 * 1000;
+
+  return otp;
+};
+
+// Verify password reset OTP
+pharmacistSchema.methods.verifyPasswordResetOTP = function(otp) {
+  return this.passwordResetOTP === otp && this.passwordResetOTPExpires > Date.now();
+};
+
+// Clear password reset OTP
+pharmacistSchema.methods.clearPasswordResetOTP = function() {
+  this.passwordResetOTP = undefined;
+  this.passwordResetOTPExpires = undefined;
 };
 
 // Virtual for full name
