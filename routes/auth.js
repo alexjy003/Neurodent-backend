@@ -5,6 +5,7 @@ const passport = require('passport');
 const Patient = require('../models/Patient');
 const Doctor = require('../models/Doctor');
 const Pharmacist = require('../models/Pharmacist');
+const Admin = require('../models/Admin');
 const auth = require('../middleware/auth');
 const emailService = require('../services/emailService');
 
@@ -262,20 +263,131 @@ router.post('/logout', auth, async (req, res) => {
   }
 });
 
-// Verify token endpoint
-router.get('/verify', auth, async (req, res) => {
+// Verify token endpoint - Universal version
+router.get('/verify', async (req, res) => {
   try {
-    res.json({
-      valid: true,
-      patient: {
-        id: req.patient._id,
-        firstName: req.patient.firstName,
-        lastName: req.patient.lastName,
-        email: req.patient.email
+    const token = req.header('Authorization')?.replace('Bearer ', '');
+    
+    if (!token) {
+      return res.status(401).json({ valid: false, message: 'No token provided' });
+    }
+
+    // Check if it's a mock admin token
+    if (token.startsWith('admin_token_')) {
+      const tokenParts = token.split('_');
+      if (tokenParts.length >= 3) {
+        const timestamp = parseInt(tokenParts[2]);
+        const eightHoursAgo = Date.now() - (8 * 60 * 60 * 1000);
+        
+        if (timestamp > eightHoursAgo) {
+          return res.json({
+            valid: true,
+            user: {
+              id: 'admin-1',
+              firstName: 'Admin',
+              lastName: 'User',
+              email: 'admin@gmail.com',
+              userType: 'admin'
+            }
+          });
+        } else {
+          return res.status(401).json({ valid: false, message: 'Admin token expired' });
+        }
+      } else {
+        return res.status(401).json({ valid: false, message: 'Invalid admin token format' });
       }
-    });
+    }
+
+    // Try to verify as JWT token
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      
+      let user = null;
+      let userType = null;
+
+      // Check what type of token it is based on the decoded content
+      if (decoded.patientId) {
+        const patient = await Patient.findById(decoded.patientId).select('-password');
+        if (patient) {
+          user = {
+            id: patient._id,
+            firstName: patient.firstName,
+            lastName: patient.lastName,
+            email: patient.email,
+            phone: patient.phone,
+            dateOfBirth: patient.dateOfBirth,
+            profilePicture: patient.profilePicture,
+            userType: 'patient'
+          };
+          userType = 'patient';
+        }
+      } else if (decoded.doctorId) {
+        const doctor = await Doctor.findById(decoded.doctorId).select('-password');
+        if (doctor && doctor.availability === 'active') {
+          user = {
+            id: doctor._id,
+            firstName: doctor.firstName,
+            lastName: doctor.lastName,
+            email: doctor.email,
+            specialization: doctor.specialization,
+            position: doctor.position,
+            profileImage: doctor.profileImage,
+            userType: 'doctor'
+          };
+          userType = 'doctor';
+        }
+      } else if (decoded.pharmacistId) {
+        const pharmacist = await Pharmacist.findById(decoded.pharmacistId).select('-password');
+        if (pharmacist && pharmacist.availability === 'Active') {
+          user = {
+            id: pharmacist._id,
+            firstName: pharmacist.firstName,
+            lastName: pharmacist.lastName,
+            name: pharmacist.name,
+            email: pharmacist.email,
+            department: pharmacist.department,
+            specialization: pharmacist.specialization,
+            shift: pharmacist.shift,
+            profileImage: pharmacist.profileImage,
+            availability: pharmacist.availability,
+            userType: 'pharmacist'
+          };
+          userType = 'pharmacist';
+        }
+      } else if (decoded.adminId) {
+        // Handle regular admin JWT tokens if they exist
+        user = {
+          id: decoded.adminId,
+          firstName: 'Admin',
+          lastName: 'User',
+          email: 'admin@gmail.com',
+          role: 'admin',
+          userType: 'admin'
+        };
+        userType = 'admin';
+      }
+
+      if (!user) {
+        return res.status(401).json({ valid: false, message: 'User not found or inactive' });
+      }
+
+      console.log(`✅ Token verification successful for ${userType}:`, user.email);
+
+      res.json({
+        valid: true,
+        user: user,
+        // For backward compatibility, also include as 'patient' if it's a patient
+        ...(userType === 'patient' && { patient: user })
+      });
+
+    } catch (jwtError) {
+      console.error('❌ JWT verification failed:', jwtError.message);
+      return res.status(401).json({ valid: false, message: 'Invalid token' });
+    }
+
   } catch (error) {
-    res.status(401).json({ valid: false, message: 'Invalid token' });
+    console.error('❌ Token verification error:', error);
+    res.status(401).json({ valid: false, message: 'Token verification failed' });
   }
 });
 
@@ -675,6 +787,187 @@ const generateDoctorToken = (doctorId) => {
 const generatePharmacistToken = (pharmacistId) => {
   return jwt.sign({ pharmacistId }, process.env.JWT_SECRET, { expiresIn: '7d' });
 };
+
+// Generate JWT token for admin
+const generateAdminToken = (adminId) => {
+  return jwt.sign({ adminId }, process.env.JWT_SECRET, { expiresIn: '7d' });
+};
+
+// ==================== UNIVERSAL LOGIN ROUTE ====================
+
+// Universal login that checks all user types
+router.post('/universal-login', [
+  body('email').notEmpty().withMessage('Email or User ID is required'),
+  body('password').notEmpty().withMessage('Password is required')
+], async (req, res) => {
+  console.log('🔍 Universal login endpoint hit');
+  console.log('🔍 Request body:', req.body);
+  console.log('🔍 Request headers:', req.headers);
+  
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      console.log('❌ Validation errors:', errors.array());
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array()
+      });
+    }
+
+    const { email, password } = req.body;
+    console.log('🔍 Universal login attempt:', { email, passwordLength: password?.length });
+
+    // Try to find user in all collections
+    let user = null;
+    let userType = null;
+    let token = null;
+
+    // Check for hardcoded admin credentials (temporary solution)
+    console.log('🔍 Checking admin credentials:', email === 'admin@gmail.com', password === 'Admin@123');
+    if (email === 'admin@gmail.com' && password === 'Admin@123') {
+      // Create mock admin user
+      user = {
+        _id: 'admin-1',
+        firstName: 'Admin',
+        lastName: 'User',
+        email: 'admin@gmail.com',
+        role: 'admin'
+      };
+      userType = 'admin';
+      // Use mock admin token format that the middleware expects
+      token = `admin_token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    }
+
+    // Check Doctor collection
+    if (!user) {
+      const doctor = await Doctor.findOne({ email });
+      if (doctor && doctor.availability === 'active') {
+        const isMatch = await doctor.comparePassword(password);
+        if (isMatch) {
+          user = doctor;
+          userType = 'doctor';
+          token = generateDoctorToken(doctor._id);
+          // Update last login
+          await doctor.updateLastLogin();
+        }
+      }
+    }
+
+    // Check Pharmacist collection
+    if (!user) {
+      const pharmacist = await Pharmacist.findOne({ email });
+      if (pharmacist && pharmacist.availability === 'Active') {
+        const isMatch = await pharmacist.comparePassword(password);
+        if (isMatch) {
+          user = pharmacist;
+          userType = 'pharmacist';
+          token = generatePharmacistToken(pharmacist._id);
+          // Update last login
+          await pharmacist.updateLastLogin();
+        }
+      }
+    }
+
+    // Check Patient collection
+    if (!user) {
+      const patient = await Patient.findOne({ email });
+      if (patient) {
+        const isMatch = await patient.comparePassword(password);
+        if (isMatch) {
+          user = patient;
+          userType = 'patient';
+          token = generateToken(patient._id);
+        }
+      }
+    }
+
+    // If no user found in any collection
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+    }
+
+    // Prepare user response based on type
+    let userResponse = {};
+    switch (userType) {
+      case 'admin':
+        userResponse = {
+          id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          role: user.role,
+          userType: 'admin'
+        };
+        break;
+      case 'doctor':
+        userResponse = {
+          id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          specialization: user.specialization,
+          position: user.position,
+          profileImage: user.profileImage,
+          userType: 'doctor'
+        };
+        break;
+      case 'pharmacist':
+        userResponse = {
+          id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          name: user.name,
+          email: user.email,
+          department: user.department,
+          specialization: user.specialization,
+          shift: user.shift,
+          profileImage: user.profileImage,
+          availability: user.availability,
+          userType: 'pharmacist'
+        };
+        break;
+      case 'patient':
+        userResponse = {
+          id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          phone: user.phone,
+          dateOfBirth: user.dateOfBirth,
+          profilePicture: user.profilePicture,
+          userType: 'patient'
+        };
+        break;
+      default:
+        userResponse = {
+          id: user._id,
+          email: user.email,
+          userType: userType
+        };
+    }
+
+    console.log(`✅ Universal login successful for ${userType}:`, userResponse.email);
+
+    // Return success response
+    res.json({
+      success: true,
+      message: 'Login successful',
+      token,
+      user: userResponse
+    });
+
+  } catch (error) {
+    console.error('Universal login error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error. Please try again.'
+    });
+  }
+});
 
 // Doctor login
 router.post('/doctor/login', [
