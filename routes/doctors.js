@@ -8,6 +8,7 @@ const { uploadSingle, handleUploadResponse } = require('../middleware/cloudinary
 const { deleteImage } = require('../config/cloudinary');
 const emailService = require('../services/emailService');
 const { generateDoctorPassword } = require('../utils/passwordGenerator');
+const doctorAuth = require('../middleware/doctorAuth');
 
 // Helper function to get next available slot for a doctor
 const getNextAvailableSlot = async (doctorId) => {
@@ -417,6 +418,168 @@ router.patch('/:id/availability', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while updating doctor availability',
+      error: error.message
+    });
+  }
+});
+
+// Doctor Profile Management Routes (Protected)
+
+// Get current doctor's profile
+router.get('/profile/me', doctorAuth, async (req, res) => {
+  try {
+    const doctor = await Doctor.findById(req.doctor._id).select('-password');
+    
+    if (!doctor) {
+      return res.status(404).json({
+        success: false,
+        message: 'Doctor not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: { doctor }
+    });
+  } catch (error) {
+    console.error('Error fetching doctor profile:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching profile',
+      error: error.message
+    });
+  }
+});
+
+// Update current doctor's profile
+router.put('/profile/me', doctorAuth, uploadSingle('profileImage'), handleUploadResponse, [
+  body('firstName').optional().trim().notEmpty().withMessage('First name cannot be empty'),
+  body('lastName').optional().trim().notEmpty().withMessage('Last name cannot be empty'),
+  body('email').optional().isEmail().withMessage('Valid email is required'),
+  body('phone').optional().trim().notEmpty().withMessage('Phone number cannot be empty'),
+  body('dateOfBirth').optional().isISO8601().withMessage('Valid date of birth is required'),
+  body('gender').optional().isIn(['male', 'female', 'other']).withMessage('Valid gender is required'),
+  body('specialization').optional().trim().notEmpty().withMessage('Specialization cannot be empty'),
+  body('experience').optional().trim().notEmpty().withMessage('Experience cannot be empty'),
+  body('position').optional().isIn(['Junior Doctor', 'Senior Doctor', 'Specialist', 'Consultant', 'Head of Department']).withMessage('Valid position is required'),
+  body('bio').optional().trim().isLength({ max: 500 }).withMessage('Bio cannot exceed 500 characters')
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array()
+      });
+    }
+
+    const doctor = await Doctor.findById(req.doctor._id);
+    if (!doctor) {
+      return res.status(404).json({
+        success: false,
+        message: 'Doctor not found'
+      });
+    }
+
+    // Update fields
+    const updateFields = ['firstName', 'lastName', 'email', 'phone', 'dateOfBirth', 'gender', 'specialization', 'experience', 'position', 'bio'];
+    updateFields.forEach(field => {
+      if (req.body[field] !== undefined) {
+        doctor[field] = req.body[field];
+      }
+    });
+
+    // Handle profile image update
+    if (req.uploadResult && req.uploadResult.success) {
+      // Delete old image if exists
+      if (doctor.profileImage) {
+        try {
+          const publicId = doctor.profileImage.split('/').pop().split('.')[0];
+          await deleteImage(`neurodent/${publicId}`);
+        } catch (deleteError) {
+          console.error('Error deleting old profile image:', deleteError);
+          // Don't fail the update if image deletion fails
+        }
+      }
+      doctor.profileImage = req.uploadResult.url;
+    }
+
+    doctor.updatedAt = new Date();
+    await doctor.save();
+
+    // Return doctor without password
+    const updatedDoctor = await Doctor.findById(doctor._id).select('-password');
+
+    res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      data: { doctor: updatedDoctor }
+    });
+  } catch (error) {
+    console.error('Error updating doctor profile:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while updating profile',
+      error: error.message
+    });
+  }
+});
+
+// Update doctor password
+router.put('/profile/password', doctorAuth, [
+  body('currentPassword').notEmpty().withMessage('Current password is required'),
+  body('newPassword').isLength({ min: 6 }).withMessage('New password must be at least 6 characters'),
+  body('confirmPassword').custom((value, { req }) => {
+    if (value !== req.body.newPassword) {
+      throw new Error('Password confirmation does not match new password');
+    }
+    return true;
+  })
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array()
+      });
+    }
+
+    const { currentPassword, newPassword } = req.body;
+
+    const doctor = await Doctor.findById(req.doctor._id);
+    if (!doctor) {
+      return res.status(404).json({
+        success: false,
+        message: 'Doctor not found'
+      });
+    }
+
+    // Verify current password
+    const isValidPassword = await doctor.comparePassword(currentPassword);
+    if (!isValidPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Current password is incorrect'
+      });
+    }
+
+    // Update password
+    doctor.password = newPassword; // Will be hashed by pre-save middleware
+    doctor.updatedAt = new Date();
+    await doctor.save();
+
+    res.json({
+      success: true,
+      message: 'Password updated successfully'
+    });
+  } catch (error) {
+    console.error('Error updating password:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while updating password',
       error: error.message
     });
   }

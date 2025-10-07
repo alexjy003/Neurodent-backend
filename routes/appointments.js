@@ -405,14 +405,25 @@ router.get('/doctor/my-appointments', doctorAuth, async (req, res) => {
     console.log('Doctor object from middleware:', req.doctor);
     const doctorId = req.doctor._id;
     console.log('Doctor ID:', doctorId);
-    const { limit = 20, status = 'all', date = null } = req.query;
+    const { limit = 20, status = 'all', date = null, appointmentType = 'upcoming' } = req.query;
     
     let filter = { doctorId };
+    
+    // Get today's date for comparison
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     
     // Filter by status
     if (status !== 'all') {
       if (status === 'pending') {
         filter.status = { $in: ['scheduled', 'confirmed'] };
+        
+        // For pending appointments, separate upcoming and past
+        if (appointmentType === 'upcoming') {
+          filter.appointmentDate = { $gte: today };
+        } else if (appointmentType === 'past') {
+          filter.appointmentDate = { $lt: today };
+        }
       } else {
         filter.status = status;
       }
@@ -430,6 +441,14 @@ router.get('/doctor/my-appointments', doctorAuth, async (req, res) => {
       .populate('patientId', 'firstName lastName email phone dateOfBirth')
       .sort({ appointmentDate: 1, startTime: 1 })
       .limit(parseInt(limit));
+    
+    console.log('🔍 Backend Debug:');
+    console.log('- Doctor ID:', doctorId);
+    console.log('- Status filter:', status);
+    console.log('- Appointment type:', appointmentType);
+    console.log('- Date filter:', date);
+    console.log('- Final filter object:', JSON.stringify(filter, null, 2));
+    console.log('- Found appointments count:', appointments.length);
     
     // Format date properly for frontend using UTC components
     const formattedAppointments = appointments.map(appointment => {
