@@ -16,9 +16,16 @@ const auth = async (req, res, next) => {
       return res.status(401).json({ message: 'Token is not valid' });
     }
 
+    // Set both req.patient and req.user for compatibility
     req.patient = patient;
+    req.user = {
+      patientId: patient._id,
+      ...decoded
+    };
+    
     next();
   } catch (error) {
+    console.error('Auth middleware error:', error);
     res.status(401).json({ message: 'Token is not valid' });
   }
 };

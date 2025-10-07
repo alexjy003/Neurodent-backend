@@ -35,6 +35,37 @@ const patientSchema = new mongoose.Schema({
   dateOfBirth: {
     type: Date
   },
+  gender: {
+    type: String,
+    enum: ['male', 'female', 'other', 'prefer-not-to-say'],
+    default: null
+  },
+  address: {
+    type: String,
+    trim: true
+  },
+  city: {
+    type: String,
+    trim: true
+  },
+  state: {
+    type: String,
+    trim: true
+  },
+  zipCode: {
+    type: String,
+    trim: true
+  },
+  profileImage: {
+    url: {
+      type: String,
+      trim: true
+    },
+    publicId: {
+      type: String,
+      trim: true
+    }
+  },
   googleId: {
     type: String,
     sparse: true

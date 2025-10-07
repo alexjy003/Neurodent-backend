@@ -956,14 +956,28 @@ router.post('/universal-login', [
 
     // Check Patient collection
     if (!user) {
+      console.log('🔍 Checking Patient collection for:', email);
       const patient = await Patient.findOne({ email });
+      console.log('🔍 Patient found:', !!patient);
       if (patient) {
+        console.log('🔍 Patient details:', {
+          id: patient._id,
+          email: patient.email,
+          firstName: patient.firstName,
+          hasPassword: !!patient.password
+        });
         const isMatch = await patient.comparePassword(password);
+        console.log('🔍 Password match result:', isMatch);
         if (isMatch) {
           user = patient;
           userType = 'patient';
           token = generateToken(patient._id);
+          console.log('✅ Patient login successful, token generated');
+        } else {
+          console.log('❌ Patient password mismatch');
         }
+      } else {
+        console.log('❌ No patient found with email:', email);
       }
     }
 
@@ -1240,6 +1254,110 @@ router.post('/pharmacist/logout', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error during logout'
+    });
+  }
+});
+
+// Patient Profile Routes
+
+// Get patient profile
+router.get('/patient/profile', auth, async (req, res) => {
+  try {
+    const patient = await Patient.findById(req.user.patientId).select('-password -resetPasswordToken -passwordResetOTP -emailVerificationOTP');
+    
+    if (!patient) {
+      return res.status(404).json({
+        success: false,
+        message: 'Patient not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      patient: patient
+    });
+
+  } catch (error) {
+    console.error('Error fetching patient profile:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+});
+
+// Update patient profile
+router.put('/patient/profile', auth, [
+  body('firstName').optional().trim().notEmpty().withMessage('First name cannot be empty'),
+  body('lastName').optional().trim().notEmpty().withMessage('Last name cannot be empty'),
+  body('email').optional().isEmail().withMessage('Valid email is required'),
+  body('phone').optional().trim(),
+  body('dateOfBirth').optional().isISO8601().withMessage('Valid date is required'),
+  body('gender').optional().isIn(['male', 'female', 'other', 'prefer-not-to-say']).withMessage('Invalid gender'),
+  body('address').optional().trim(),
+  body('city').optional().trim(),
+  body('state').optional().trim(),
+  body('zipCode').optional().trim()
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array()
+      });
+    }
+
+    const allowedUpdates = ['firstName', 'lastName', 'email', 'phone', 'dateOfBirth', 'gender', 'address', 'city', 'state', 'zipCode'];
+    const updates = {};
+
+    // Only include fields that are in allowedUpdates and present in request
+    allowedUpdates.forEach(field => {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    });
+
+    // Check if email is being updated and if it already exists
+    if (updates.email) {
+      const existingPatient = await Patient.findOne({ 
+        email: updates.email, 
+        _id: { $ne: req.user.patientId } 
+      });
+      
+      if (existingPatient) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email already in use by another patient'
+        });
+      }
+    }
+
+    const patient = await Patient.findByIdAndUpdate(
+      req.user.patientId,
+      updates,
+      { new: true, runValidators: true }
+    ).select('-password -resetPasswordToken -passwordResetOTP -emailVerificationOTP');
+
+    if (!patient) {
+      return res.status(404).json({
+        success: false,
+        message: 'Patient not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      patient: patient
+    });
+
+  } catch (error) {
+    console.error('Error updating patient profile:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
     });
   }
 });

@@ -859,4 +859,334 @@ router.patch('/doctor/update/:appointmentId', [
   }
 });
 
+// Get available time slots for doctor (for reschedule)
+router.get('/doctor/available-slots', doctorAuth, async (req, res) => {
+  try {
+    const { date } = req.query;
+    const doctorId = req.doctor._id; // Fixed: using req.doctor instead of req.user
+    
+    if (!date) {
+      return res.status(400).json({
+        success: false,
+        message: 'Date is required'
+      });
+    }
+
+    console.log(`🔍 Fetching available slots for doctor ${doctorId} on ${date}`);
+
+    // Find doctor's schedule for the day
+    const requestDate = new Date(date);
+    console.log(`📅 Raw date input: "${date}"`);
+    console.log(`📅 Parsed Date object: ${requestDate}`);
+    console.log(`📅 Date is valid: ${!isNaN(requestDate.getTime())}`);
+    
+    const dayOfWeek = requestDate.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+    
+    console.log(`📅 Day of week: ${dayOfWeek}`);
+    console.log(`👨‍⚕️ Doctor ID: ${doctorId}`);
+
+    // First, find any schedule for this doctor
+    const allSchedules = await Schedule.find({ doctorId });
+    console.log(`📋 Found ${allSchedules.length} schedules for doctor`);
+    
+    // Find doctor's schedule - get the most recent active schedule
+    let schedule = await Schedule.findOne({ 
+      doctorId, 
+      status: 'active' 
+    }).sort({ createdAt: -1 }); // Sort by newest first
+
+    if (!schedule) {
+      console.log(`❌ No active schedule found for doctor ${doctorId}`);
+      return res.json({
+        success: true,
+        data: { availableSlots: [] },
+        message: 'No schedule found for this day'
+      });
+    }
+
+    console.log(`📋 Found schedule for doctor (created: ${schedule.createdAt}), checking weeklySchedule`);
+    const daySchedule = schedule.weeklySchedule[dayOfWeek];
+    console.log(`📅 Day schedule for ${dayOfWeek}:`, daySchedule);
+    
+    if (!daySchedule || daySchedule.length === 0) {
+      console.log(`❌ Doctor is not working on ${dayOfWeek}`);
+      return res.json({
+        success: true,
+        data: { availableSlots: [] },
+        message: `Doctor is not working on ${dayOfWeek}`
+      });
+    }
+
+    console.log(`✅ Doctor has ${daySchedule.length} slots on ${dayOfWeek}`);
+    console.log(`📋 Raw daySchedule data:`, JSON.stringify(daySchedule, null, 2));
+
+    // Show exact scheduled time slots as they are
+    const allSlots = [];
+    
+    for (const scheduleSlot of daySchedule) {
+      console.log(`🔍 Examining schedule slot:`, {
+        startTime: scheduleSlot.startTime,
+        endTime: scheduleSlot.endTime,
+        type: scheduleSlot.type,
+        isAvailable: scheduleSlot.isAvailable
+      });
+      
+      if (scheduleSlot.isAvailable && scheduleSlot.type !== 'Day Off') {
+        console.log(`📅 Processing slot: ${scheduleSlot.startTime} - ${scheduleSlot.endTime} (${scheduleSlot.type})`);
+        
+        // Use the exact time slot as scheduled by the doctor
+        const formattedSlot = `${convertTo12Hour(scheduleSlot.startTime)} - ${convertTo12Hour(scheduleSlot.endTime)}`;
+        allSlots.push(formattedSlot);
+        
+        console.log(`✅ Added scheduled slot: ${formattedSlot}`);
+      } else {
+        console.log(`❌ Skipped slot: isAvailable=${scheduleSlot.isAvailable}, type=${scheduleSlot.type}`);
+      }
+    }
+    
+    console.log(`📅 Generated ${allSlots.length} slots based on doctor's exact schedule`);
+
+    // Find existing appointments for this date
+    const existingAppointments = await Appointment.find({
+      doctorId,
+      appointmentDate: new Date(date), // Use appointmentDate instead of date
+      status: { $in: ['scheduled', 'confirmed'] } // Remove 'rescheduled' since it's not a valid status
+    });
+
+    console.log(`🔍 Found ${existingAppointments.length} existing appointments for ${date}`);
+    if (existingAppointments.length > 0) {
+      console.log(`📋 Existing appointments:`, existingAppointments.map(apt => ({
+        timeRange: apt.timeRange,
+        startTime: apt.startTime,
+        endTime: apt.endTime,
+        status: apt.status
+      })));
+    }
+
+    // Remove booked slots
+    const bookedSlots = existingAppointments.map(apt => apt.timeRange);
+    const availableSlots = allSlots.filter(slot => !bookedSlots.includes(slot));
+
+    console.log(`✅ Generated ${allSlots.length} total slots, ${bookedSlots.length} booked, ${availableSlots.length} available`);
+    console.log(`📋 All generated slots:`, allSlots);
+    console.log(`📋 Booked slots:`, bookedSlots);
+    console.log(`📋 Available slots:`, availableSlots);
+
+    res.json({
+      success: true,
+      data: { availableSlots }
+    });
+
+  } catch (error) {
+    console.error('❌ Error fetching available slots:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching available slots',
+      error: error.message
+    });
+  }
+});
+
+// Doctor reschedule appointment
+router.patch('/doctor/reschedule/:appointmentId', [
+  doctorAuth,
+  body('newDate').notEmpty().withMessage('New date is required'),
+  body('newTimeSlot').notEmpty().withMessage('New time slot is required'),
+  body('reason').optional().isString()
+], async (req, res) => {
+  try {
+    console.log('🔄 Reschedule request received:');
+    console.log('- Appointment ID:', req.params.appointmentId);
+    console.log('- Request body:', req.body);
+    console.log('- Doctor:', req.doctor._id);
+
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      console.log('❌ Validation errors:', errors.array());
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array()
+      });
+    }
+
+    const { appointmentId } = req.params;
+    const { newDate, newTimeSlot, reason } = req.body;
+    const doctorId = req.doctor._id; // Fixed: using req.doctor instead of req.user
+
+    console.log(`🔄 Doctor ${doctorId} rescheduling appointment ${appointmentId}`);
+
+    // Find the appointment
+    console.log(`🔍 Looking for appointment with ID: ${appointmentId} and doctorId: ${doctorId}`);
+    const appointment = await Appointment.findOne({
+      _id: appointmentId,
+      doctorId
+    }).populate('patientId', 'firstName lastName email');
+
+    console.log(`📋 Found appointment:`, appointment ? 'Yes' : 'No');
+    if (appointment) {
+      console.log(`📋 Appointment details:`, {
+        id: appointment._id,
+        currentDate: appointment.appointmentDate,
+        currentTime: appointment.timeRange,
+        status: appointment.status
+      });
+    }
+
+    if (!appointment) {
+      console.log(`❌ Appointment not found with ID ${appointmentId} for doctor ${doctorId}`);
+      return res.status(404).json({
+        success: false,
+        message: 'Appointment not found'
+      });
+    }
+
+    // Check if the new time slot is available
+    console.log(`🔍 Checking for conflicts on ${newDate} at ${newTimeSlot}`);
+    const conflictingAppointment = await Appointment.findOne({
+      doctorId,
+      appointmentDate: new Date(newDate),
+      timeRange: newTimeSlot,
+      status: { $in: ['scheduled', 'confirmed', 'rescheduled'] },
+      _id: { $ne: appointmentId } // Exclude current appointment
+    });
+
+    console.log(`⚠️ Conflicting appointment found:`, conflictingAppointment ? 'Yes' : 'No');
+
+    if (conflictingAppointment) {
+      return res.status(400).json({
+        success: false,
+        message: 'Selected time slot is already booked'
+      });
+    }
+
+    // Store original appointment details for email
+    const originalDate = appointment.appointmentDate;
+    const originalTimeRange = appointment.timeRange;
+
+    // Parse the new time slot to extract start and end times
+    const [startTimeStr, endTimeStr] = newTimeSlot.split(' - ');
+    
+    console.log(`🔄 Parsing time slot "${newTimeSlot}":`, {
+      startTimeStr,
+      endTimeStr
+    });
+    
+    const newStartTime = convertTo24Hour(startTimeStr);
+    const newEndTime = convertTo24Hour(endTimeStr);
+
+    console.log(`🔄 Converting time slot "${newTimeSlot}" to:`, {
+      startTime: newStartTime,
+      endTime: newEndTime
+    });
+
+    // Store original values for comparison
+    const originalStartTime = appointment.startTime;
+    const originalEndTime = appointment.endTime;
+
+    // Determine appropriate slotType based on time (clinic hours: 9 AM - 8 PM)
+    const determineSlotType = (startTime) => {
+      const hour = parseInt(startTime.split(':')[0], 10);
+      
+      if (hour >= 9 && hour < 12) {
+        return 'Morning Consultations';
+      } else if (hour >= 12 && hour < 15) {
+        return 'Afternoon Procedures';
+      } else if (hour >= 15 && hour < 17) {
+        return 'Extended Afternoon';
+      } else if (hour >= 17 && hour < 20) {
+        return 'Evening Consultations';
+      } else {
+        // For times outside clinic hours (before 9 AM or after 8 PM)
+        return 'Emergency';
+      }
+    };
+
+    const newSlotType = determineSlotType(newStartTime);
+
+    // Update the appointment - using correct field names
+    appointment.appointmentDate = new Date(newDate);
+    appointment.startTime = newStartTime;
+    appointment.endTime = newEndTime;
+    appointment.slotType = newSlotType; // Update slotType based on new time
+    appointment.status = 'confirmed'; // Keep status as confirmed instead of rescheduled
+    appointment.rescheduleReason = reason || 'Rescheduled by doctor';
+    appointment.rescheduledAt = new Date();
+
+    console.log(`🔄 Before save - Old vs New appointment data:`, {
+      oldStartTime: originalStartTime,
+      oldEndTime: originalEndTime,
+      oldSlotType: appointment.slotType, // This will show the old value before update
+      newStartTime: appointment.startTime,
+      newEndTime: appointment.endTime,
+      newSlotType: newSlotType
+    });
+
+    await appointment.save();
+
+    console.log(`✅ After save - Updated appointment:`, {
+      savedStartTime: appointment.startTime,
+      savedEndTime: appointment.endTime,
+      savedSlotType: appointment.slotType,
+      timeRange: appointment.timeRange,
+      status: appointment.status
+    });
+
+    console.log(`✅ Appointment rescheduled successfully from ${originalDate} ${originalTimeRange} to ${newDate} ${newTimeSlot}`);
+
+    // Send email notification to patient (wrapped in try-catch to prevent failure)
+    try {
+      console.log('📧 Attempting to send reschedule notification email...');
+      await emailService.sendAppointmentRescheduleNotification({
+        patientEmail: appointment.patientId.email,
+        patientName: `${appointment.patientId.firstName} ${appointment.patientId.lastName}`,
+        doctorName: `${req.doctor.firstName} ${req.doctor.lastName}`,
+        specialization: req.doctor.specialization || 'Dentist',
+        oldDate: originalDate,
+        oldTimeRange: originalTimeRange,
+        newDate: new Date(newDate),
+        newTimeRange: newTimeSlot,
+        slotType: appointment.slotType || 'General',
+        symptoms: appointment.symptoms || ''
+      });
+      console.log('📧 Reschedule notification email sent to patient');
+    } catch (emailError) {
+      console.error('❌ Error sending reschedule email:', emailError);
+      console.error('❌ Email error details:', emailError.stack);
+      // Don't fail the reschedule if email fails - just log the error
+    }
+
+    console.log('🎉 Sending success response to frontend...');
+
+    res.json({
+      success: true,
+      message: 'Appointment rescheduled successfully',
+      appointment: {
+        id: appointment._id,
+        appointmentDate: appointment.appointmentDate,
+        timeRange: appointment.timeRange,
+        status: appointment.status,
+        patientName: `${appointment.patientId.firstName} ${appointment.patientId.lastName}`,
+        rescheduleReason: appointment.rescheduleReason
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error rescheduling appointment:', error);
+    console.error('❌ Error stack:', error.stack);
+    console.error('❌ Error details:', {
+      message: error.message,
+      name: error.name,
+      code: error.code
+    });
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error rescheduling appointment',
+      error: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
 module.exports = router;
