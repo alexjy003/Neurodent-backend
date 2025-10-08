@@ -2,10 +2,69 @@ const express = require('express');
 const { validationResult } = require('express-validator');
 const Patient = require('../models/Patient');
 const auth = require('../middleware/auth');
+const doctorAuth = require('../middleware/doctorAuth');
 const { uploadSingle, handleUploadResponse } = require('../middleware/cloudinaryUpload');
 const { cloudinary } = require('../config/cloudinary');
 
 const router = express.Router();
+
+// Get all patients (for doctors)
+router.get('/', doctorAuth, async (req, res) => {
+  try {
+    console.log('🔍 Fetching all patients for doctor...');
+    
+    const patients = await Patient.find({})
+      .select('-password -__v')
+      .sort({ createdAt: -1 });
+    
+    console.log('✅ Successfully fetched patients:', patients.length);
+    
+    res.json({
+      success: true,
+      data: patients,
+      message: `Found ${patients.length} patients`
+    });
+  } catch (error) {
+    console.error('❌ Error fetching patients:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch patients',
+      error: error.message
+    });
+  }
+});
+
+// Get single patient by ID (for doctors)
+router.get('/:id', doctorAuth, async (req, res) => {
+  try {
+    console.log('🔍 Fetching patient by ID:', req.params.id);
+    
+    const patient = await Patient.findById(req.params.id)
+      .select('-password -__v');
+    
+    if (!patient) {
+      return res.status(404).json({
+        success: false,
+        message: 'Patient not found'
+      });
+    }
+    
+    console.log('✅ Successfully fetched patient:', patient.firstName, patient.lastName);
+    
+    res.json({
+      success: true,
+      data: patient,
+      message: 'Patient found successfully'
+    });
+  } catch (error) {
+    console.error('❌ Error fetching patient:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch patient',
+      error: error.message
+    });
+  }
+});
 
 // Upload patient profile image
 router.post('/profile/image', auth, uploadSingle('profileImage'), handleUploadResponse, async (req, res) => {

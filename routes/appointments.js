@@ -41,6 +41,33 @@ const convertTo12Hour = (time24h) => {
   return `${hour12}:${minutes} ${period}`;
 };
 
+// Get appointments for a specific patient (for doctors)
+router.get('/patient/:patientId', doctorAuth, async (req, res) => {
+  try {
+    const { patientId } = req.params;
+    console.log('🔍 Fetching appointments for patient:', patientId);
+    
+    const appointments = await Appointment.find({ patientId })
+      .populate('doctorId', 'firstName lastName specialization')
+      .sort({ appointmentDate: -1, startTime: -1 });
+    
+    console.log('✅ Successfully fetched patient appointments:', appointments.length);
+    
+    res.json({
+      success: true,
+      appointments: appointments,
+      message: `Found ${appointments.length} appointments for patient`
+    });
+  } catch (error) {
+    console.error('❌ Error fetching patient appointments:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch patient appointments',
+      error: error.message
+    });
+  }
+});
+
 // Get doctor's available time slots for a specific date
 router.get('/doctor/:doctorId/slots/:date', authenticatePatient, async (req, res) => {
   try {
