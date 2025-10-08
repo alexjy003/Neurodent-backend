@@ -28,14 +28,13 @@ const medicationSchema = new mongoose.Schema({
 
 const prescriptionSchema = new mongoose.Schema({
   appointmentId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Appointment',
+    type: mongoose.Schema.Types.Mixed, // More flexible to handle different ID formats
     required: [true, 'Appointment ID is required']
   },
   patientId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Patient',
-    required: [true, 'Patient ID is required']
+    ref: 'Patient'
+    // Made optional since we might not always have patient ID from appointments
   },
   doctorId: {
     type: mongoose.Schema.Types.ObjectId,

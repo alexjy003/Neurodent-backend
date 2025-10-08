@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const { validationResult, body } = require('express-validator');
 const Prescription = require('../models/Prescription');
 const doctorAuth = require('../middleware/doctorAuth');
@@ -10,15 +11,17 @@ const router = express.Router();
 const prescriptionValidation = [
   body('appointmentId')
     .notEmpty()
-    .withMessage('Appointment ID is required')
-    .isMongoId()
-    .withMessage('Invalid appointment ID'),
+    .withMessage('Appointment ID is required'),
+    // Removed strict MongoDB ObjectId validation since appointment IDs might not be ObjectIds
   
   body('patientId')
-    .notEmpty()
-    .withMessage('Patient ID is required')
-    .isMongoId()
-    .withMessage('Invalid patient ID'),
+    .optional()
+    .custom((value) => {
+      if (value && !mongoose.Types.ObjectId.isValid(value)) {
+        throw new Error('Invalid patient ID format');
+      }
+      return true;
+    }),
   
   body('patientName')
     .trim()
@@ -49,7 +52,22 @@ const prescriptionValidation = [
   body('medications.*.duration')
     .trim()
     .notEmpty()
-    .withMessage('Medication duration is required')
+    .withMessage('Medication duration is required'),
+  
+  body('generalInstructions')
+    .optional()
+    .isLength({ max: 1000 })
+    .withMessage('General instructions cannot exceed 1000 characters'),
+  
+  body('symptoms')
+    .optional()
+    .isLength({ max: 1000 })
+    .withMessage('Symptoms cannot exceed 1000 characters'),
+  
+  body('notes')
+    .optional()
+    .isLength({ max: 500 })
+    .withMessage('Notes cannot exceed 500 characters')
 ];
 
 // POST /api/prescriptions/generate-ai - Generate AI prescription
@@ -143,8 +161,17 @@ router.post('/generate-ai', doctorAuth, [
 // POST /api/prescriptions - Create a new prescription
 router.post('/', doctorAuth, prescriptionValidation, async (req, res) => {
   try {
+    console.log('📥 Received prescription request:', {
+      appointmentId: req.body.appointmentId,
+      patientName: req.body.patientName,
+      diagnosis: req.body.diagnosis,
+      medicationCount: req.body.medications?.length,
+      doctorId: req.doctor._id
+    });
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
+      console.log('❌ Validation errors:', errors.array());
       return res.status(400).json({
         success: false,
         message: 'Validation failed',
@@ -152,24 +179,67 @@ router.post('/', doctorAuth, prescriptionValidation, async (req, res) => {
       });
     }
 
+    // Clean up the data before saving
     const prescriptionData = {
-      ...req.body,
-      doctorId: req.doctor._id
+      appointmentId: req.body.appointmentId,
+      patientName: req.body.patientName.trim(),
+      diagnosis: req.body.diagnosis.trim(),
+      medications: req.body.medications.map(med => ({
+        name: med.name.trim(),
+        dosage: med.dosage.trim(),
+        duration: med.duration.trim(),
+        instructions: med.instructions ? med.instructions.trim() : '',
+        frequency: med.frequency ? med.frequency.trim() : ''
+      })),
+      doctorId: req.doctor._id,
+      generalInstructions: req.body.generalInstructions ? req.body.generalInstructions.trim() : '',
+      symptoms: req.body.symptoms ? req.body.symptoms.trim() : '',
+      notes: req.body.notes ? req.body.notes.trim() : '',
+      isAIGenerated: req.body.isAIGenerated || false,
+      status: 'active',
+      prescriptionDate: new Date()
     };
 
-    console.log('💾 Creating prescription:', {
-      patientName: prescriptionData.patientName,
-      diagnosis: prescriptionData.diagnosis,
-      medicationCount: prescriptionData.medications.length
-    });
+    // Add optional fields if provided
+    if (req.body.patientId && mongoose.Types.ObjectId.isValid(req.body.patientId)) {
+      prescriptionData.patientId = req.body.patientId;
+    }
+    
+    if (req.body.patientAge && !isNaN(req.body.patientAge)) {
+      prescriptionData.patientAge = parseInt(req.body.patientAge);
+    }
+    
+    if (req.body.followUpDate) {
+      prescriptionData.followUpDate = new Date(req.body.followUpDate);
+    }
+    
+    if (req.body.aiModel) {
+      prescriptionData.aiModel = req.body.aiModel;
+    }
+
+    console.log('💾 Creating prescription with data:', prescriptionData);
 
     const prescription = new Prescription(prescriptionData);
-    await prescription.save();
+    const savedPrescription = await prescription.save();
 
-    const populatedPrescription = await Prescription.findById(prescription._id)
-      .populate('appointmentId', 'date timeRange')
-      .populate('patientId', 'firstName lastName age')
-      .populate('doctorId', 'firstName lastName specialization');
+    console.log('✅ Prescription saved successfully with ID:', savedPrescription._id);
+
+    // Try to populate the saved prescription, but don't fail if population fails
+    let populatedPrescription;
+    try {
+      populatedPrescription = await Prescription.findById(savedPrescription._id)
+        .populate('doctorId', 'firstName lastName specialization');
+      
+      // Only populate patientId if it's a valid ObjectId
+      if (savedPrescription.patientId && mongoose.Types.ObjectId.isValid(savedPrescription.patientId)) {
+        populatedPrescription = await Prescription.findById(savedPrescription._id)
+          .populate('patientId', 'firstName lastName age')
+          .populate('doctorId', 'firstName lastName specialization');
+      }
+    } catch (populateError) {
+      console.log('⚠️ Population failed, returning unpopulated prescription:', populateError.message);
+      populatedPrescription = savedPrescription;
+    }
 
     res.status(201).json({
       success: true,
@@ -179,11 +249,28 @@ router.post('/', doctorAuth, prescriptionValidation, async (req, res) => {
 
   } catch (error) {
     console.error('❌ Error creating prescription:', error);
+    console.error('Error stack:', error.stack);
     
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
         message: 'Prescription already exists for this appointment'
+      });
+    }
+
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => ({
+        field: err.path,
+        message: err.message,
+        value: err.value
+      }));
+      
+      console.log('❌ Mongoose validation errors:', validationErrors);
+      
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: validationErrors
       });
     }
 
