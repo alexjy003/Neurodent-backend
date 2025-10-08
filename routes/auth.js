@@ -309,6 +309,14 @@ router.get('/verify', async (req, res) => {
       if (decoded.patientId) {
         const patient = await Patient.findById(decoded.patientId).select('-password');
         if (patient) {
+          console.log('🔍 Patient auth debug:', {
+            patientName: `${patient.firstName} ${patient.lastName}`,
+            profilePicture: patient.profilePicture,
+            profileImageUrl: patient.profileImage?.url,
+            hasProfilePicture: !!patient.profilePicture,
+            hasProfileImageUrl: !!patient.profileImage?.url
+          });
+          
           user = {
             id: patient._id,
             firstName: patient.firstName,
@@ -316,7 +324,7 @@ router.get('/verify', async (req, res) => {
             email: patient.email,
             phone: patient.phone,
             dateOfBirth: patient.dateOfBirth,
-            profilePicture: patient.profilePicture,
+            profilePicture: patient.profilePicture || patient.profileImage?.url,
             userType: 'patient'
           };
           userType = 'patient';
@@ -1357,6 +1365,48 @@ router.put('/patient/profile', auth, [
     console.error('Error updating patient profile:', error);
     res.status(500).json({
       success: false,
+      message: 'Server error'
+    });
+  }
+});
+
+// Verify token and return current user
+router.get('/verify', auth, async (req, res) => {
+  try {
+    // Get user data based on the auth middleware result
+    const patient = await Patient.findById(req.user.patientId)
+      .select('-password -resetPasswordToken -passwordResetOTP -emailVerificationOTP');
+    
+    if (!patient) {
+      return res.status(404).json({
+        valid: false,
+        message: 'Patient not found'
+      });
+    }
+
+    res.json({
+      valid: true,
+      user: {
+        id: patient._id,
+        firstName: patient.firstName,
+        lastName: patient.lastName,
+        email: patient.email,
+        phone: patient.phone,
+        dateOfBirth: patient.dateOfBirth,
+        gender: patient.gender,
+        address: patient.address,
+        city: patient.city,
+        state: patient.state,
+        zipCode: patient.zipCode,
+        profilePicture: patient.profilePicture,
+        userType: 'patient'
+      }
+    });
+
+  } catch (error) {
+    console.error('Error verifying token:', error);
+    res.status(500).json({
+      valid: false,
       message: 'Server error'
     });
   }

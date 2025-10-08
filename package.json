@@ -22,7 +22,8 @@
     "multer-storage-cloudinary": "^4.0.0",
     "node-fetch": "^3.3.2",
     "passport": "^0.6.0",
-    "passport-google-oauth20": "^2.0.0"
+    "passport-google-oauth20": "^2.0.0",
+    "puppeteer": "^24.23.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

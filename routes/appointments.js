@@ -438,7 +438,7 @@ router.get('/doctor/my-appointments', doctorAuth, async (req, res) => {
     }
     
     const appointments = await Appointment.find(filter)
-      .populate('patientId', 'firstName lastName email phone dateOfBirth')
+      .populate('patientId', 'firstName lastName email phone dateOfBirth gender profilePicture profileImage')
       .sort({ appointmentDate: 1, startTime: 1 })
       .limit(parseInt(limit));
     
@@ -449,6 +449,26 @@ router.get('/doctor/my-appointments', doctorAuth, async (req, res) => {
     console.log('- Date filter:', date);
     console.log('- Final filter object:', JSON.stringify(filter, null, 2));
     console.log('- Found appointments count:', appointments.length);
+    
+    // Debug each appointment's patient gender data
+    appointments.forEach((apt, index) => {
+      console.log(`🎯 Appointment ${index + 1} Gender Debug:`, {
+        appointmentId: apt._id,
+        patientName: `${apt.patientId.firstName} ${apt.patientId.lastName}`,
+        patientId: apt.patientId._id,
+        patientIdObject: apt.patientId,
+        gender: apt.patientId.gender,
+        genderType: typeof apt.patientId.gender,
+        hasGender: !!apt.patientId.gender,
+        appointmentStatus: apt.status,
+        appointmentDate: apt.appointmentDate
+      });
+    });
+    
+    console.log('\n🔍 Sample populated patient object:');
+    if (appointments.length > 0) {
+      console.log(JSON.stringify(appointments[0].patientId, null, 2));
+    }
     
     // Format date properly for frontend using UTC components
     const formattedAppointments = appointments.map(appointment => {
@@ -469,13 +489,36 @@ router.get('/doctor/my-appointments', doctorAuth, async (req, res) => {
         }
       }
       
+      // Debug: Check patient profile picture fields
+      console.log('🔍 Patient profile picture debug:', {
+        patientName: `${appointment.patientId.firstName} ${appointment.patientId.lastName}`,
+        profilePicture: appointment.patientId.profilePicture,
+        profileImageUrl: appointment.patientId.profileImage?.url,
+        hasProfilePicture: !!appointment.patientId.profilePicture,
+        hasProfileImageUrl: !!appointment.patientId.profileImage?.url
+      });
+      
+      // Use profileImage.url if profilePicture is not available, or vice versa
+      const patientProfilePicture = appointment.patientId.profilePicture || appointment.patientId.profileImage?.url;
+      
       return {
         id: appointment._id,
-        patientId: appointment.patientId._id,
+        patientId: {
+          _id: appointment.patientId._id,
+          firstName: appointment.patientId.firstName,
+          lastName: appointment.patientId.lastName,
+          email: appointment.patientId.email,
+          phone: appointment.patientId.phone,
+          gender: appointment.patientId.gender,
+          profilePicture: appointment.patientId.profilePicture,
+          profileImage: appointment.patientId.profileImage
+        },
         patientName: `${appointment.patientId.firstName} ${appointment.patientId.lastName}`,
         patientEmail: appointment.patientId.email,
         patientPhone: appointment.patientId.phone,
         patientAge: age,
+        patientGender: appointment.patientId.gender,
+        patientProfilePicture: patientProfilePicture,
         date: appointment.formattedDate,
         appointmentDate: formattedDateString,
         timeRange: appointment.timeRange,

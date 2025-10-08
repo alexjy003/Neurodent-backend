@@ -224,7 +224,7 @@ router.get('/doctor/my-prescriptions', doctorAuth, async (req, res) => {
 
     const prescriptions = await Prescription.find(query)
       .populate('appointmentId', 'date timeRange')
-      .populate('patientId', 'firstName lastName age')
+      .populate('patientId', 'firstName lastName age profilePicture profileImage')
       .sort({ prescriptionDate: -1 })
       .skip(skip)
       .limit(limit);
@@ -398,6 +398,81 @@ router.delete('/:id', doctorAuth, async (req, res) => {
       success: false,
       message: 'Failed to delete prescription',
       error: error.message
+    });
+  }
+});
+
+// GET /api/prescriptions/:id/pdf - Download prescription as PDF
+router.get('/:id/pdf', doctorAuth, async (req, res) => {
+  try {
+    const prescription = await Prescription.findById(req.params.id)
+      .populate('patientId', 'firstName lastName age')
+      .populate('doctorId', 'firstName lastName specialty');
+
+    if (!prescription) {
+      return res.status(404).json({
+        success: false,
+        message: 'Prescription not found'
+      });
+    }
+
+    // Verify the prescription belongs to the requesting doctor
+    if (prescription.doctorId._id.toString() !== req.doctor._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+
+    // Generate simple text-based prescription content
+    const prescriptionContent = `
+NEURODENT DENTAL CLINIC
+Prescription
+
+Date: ${new Date(prescription.prescriptionDate || prescription.createdAt).toLocaleDateString()}
+Prescription ID: ${prescription.prescriptionNumber || prescription._id}
+
+DOCTOR INFORMATION:
+Dr. ${prescription.doctorId.firstName} ${prescription.doctorId.lastName}
+Specialty: ${prescription.doctorId.specialty || 'General Dentistry'}
+
+PATIENT INFORMATION:
+Name: ${prescription.patientName || `${prescription.patientId.firstName} ${prescription.patientId.lastName}`}
+Age: ${prescription.patientId.age || 'N/A'} years
+
+DIAGNOSIS:
+${prescription.diagnosis}
+
+${prescription.symptoms ? `SYMPTOMS:\n${prescription.symptoms}\n` : ''}
+
+MEDICATIONS:
+${prescription.medications.map((med, index) => `
+${index + 1}. ${med.name}
+   Dosage: ${med.dosage}
+   Duration: ${med.duration}
+   ${med.frequency ? `Frequency: ${med.frequency}` : ''}
+   ${med.instructions ? `Instructions: ${med.instructions}` : ''}
+`).join('\n')}
+
+${prescription.generalInstructions ? `GENERAL INSTRUCTIONS:\n${prescription.generalInstructions}\n` : ''}
+
+${prescription.followUpDate ? `FOLLOW-UP DATE:\n${new Date(prescription.followUpDate).toLocaleDateString()}\n` : ''}
+
+---
+This prescription was ${prescription.isAIGenerated ? 'AI-generated and ' : ''}issued by Neurodent Dental Clinic
+Generated on: ${new Date().toLocaleString()}
+    `.trim();
+
+    // Set headers for text download (will be PDF in production)
+    res.setHeader('Content-Type', 'text/plain');
+    res.setHeader('Content-Disposition', `attachment; filename="prescription-${prescription._id}.txt"`);
+    res.send(prescriptionContent);
+
+  } catch (error) {
+    console.error('❌ Error generating prescription PDF:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
     });
   }
 });
