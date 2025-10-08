@@ -13,6 +13,8 @@ console.log('🔍 Environment check:');
 console.log('MONGODB_URI:', process.env.MONGODB_URI ? 'SET' : 'UNDEFINED');
 console.log('FRONTEND_URL:', process.env.FRONTEND_URL ? 'SET' : 'UNDEFINED');
 console.log('SESSION_SECRET:', process.env.SESSION_SECRET ? 'SET' : 'UNDEFINED');
+console.log('GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? 'SET' : 'UNDEFINED');
+console.log('GOOGLE_CLIENT_SECRET:', process.env.GOOGLE_CLIENT_SECRET ? 'SET' : 'UNDEFINED');
 
 const authRoutes = require('./routes/auth');
 const uploadRoutes = require('./routes/upload');

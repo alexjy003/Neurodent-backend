@@ -75,7 +75,18 @@ router.post('/register', [
       });
     }
 
+    console.log('📝 About to save patient:', {
+      firstName: patient.firstName,
+      lastName: patient.lastName,
+      email: patient.email,
+      phone: patient.phone,
+      isEmailVerified: patient.isEmailVerified,
+      otpVerified: patient.otpVerified,
+      agreeToTerms: patient.agreeToTerms
+    });
+
     await patient.save();
+    console.log('✅ Patient saved successfully with ID:', patient._id);
 
     // Generate token
     const token = generateToken(patient._id);
@@ -93,6 +104,15 @@ router.post('/register', [
       }
     });
   } catch (error) {
+    console.error('❌ Registration error:', error);
+    console.error('❌ Registration error stack:', error.stack);
+    console.error('❌ Registration error details:', {
+      message: error.message,
+      name: error.name,
+      code: error.code,
+      keyPattern: error.keyPattern,
+      keyValue: error.keyValue
+    });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
@@ -142,6 +162,18 @@ router.post('/login', [
   }
 });
 
+// Debug endpoint to check session
+router.get('/debug-session', (req, res) => {
+  console.log('🔍 Debug session endpoint hit');
+  console.log('Session:', req.session);
+  console.log('Query params:', req.query);
+  res.json({
+    session: req.session,
+    queryParams: req.query,
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Google OAuth routes
 router.get('/google',
   (req, res, next) => {
@@ -162,8 +194,11 @@ router.get('/google',
 router.get('/google/signup',
   (req, res, next) => {
     console.log('📝 Google OAuth signup initiated');
+    console.log('📝 Session before setting intent:', req.session);
     // Store the intent in session to distinguish login vs signup
     req.session.oauthIntent = 'signup';
+    console.log('📝 Session after setting intent:', req.session);
+    console.log('📝 Request query params:', req.query);
     next();
   },
   passport.authenticate('google', {
@@ -180,53 +215,88 @@ router.get('/google/callback',
     console.log('Query params:', req.query);
     console.log('State parameter:', req.query.state);
     console.log('OAuth intent from session:', req.session ? req.session.oauthIntent : 'unknown');
+    console.log('Error parameter:', req.query.error);
+
+    // Check if there's an OAuth error
+    if (req.query.error) {
+      console.log('❌ OAuth error from Google:', req.query.error);
+      const frontendUrl = process.env.FRONTEND_URL.split(',')[0].trim();
+      return res.redirect(`${frontendUrl}/register?error=google_oauth_denied`);
+    }
+
+    // Check if we already processed this authorization code
+    if (req.session && req.session.processedCode === req.query.code) {
+      console.log('⚠️ Duplicate callback detected, redirecting to dashboard');
+      const frontendUrl = process.env.FRONTEND_URL.split(',')[0].trim();
+      return res.redirect(`${frontendUrl}/patient/dashboard`);
+    }
+
+    // Store the code to prevent duplicate processing
+    if (req.session && req.query.code) {
+      req.session.processedCode = req.query.code;
+    }
 
     // Store state in session as backup
     if (req.query.state) {
-      req.session.oauthIntent = req.query.state;
+      // Only update if session doesn't already have oauthIntent
+      if (!req.session || !req.session.oauthIntent) {
+        req.session.oauthIntent = req.query.state;
+      }
     }
 
     next();
   },
   passport.authenticate('google', {
-    failureRedirect: `${process.env.FRONTEND_URL}/login?error=google_auth_failed`,
+    failureRedirect: `${process.env.FRONTEND_URL.split(',')[0].trim()}/register?error=google_auth_failed`,
     failureMessage: true
   }),
   (req, res) => {
     try {
+      console.log('🔍 Post-authentication callback');
+      console.log('Req.user:', req.user ? 'Present' : 'Missing');
+      console.log('User ID:', req.user ? req.user._id : 'N/A');
+      console.log('User details:', req.user ? { email: req.user.email, firstName: req.user.firstName } : 'N/A');
+
       // Check if authentication failed (user is false)
       if (!req.user) {
         console.log('❌ Google OAuth authentication failed - no user');
-        const oauthIntent = req.session ? req.session.oauthIntent : 'login';
-
-        if (oauthIntent === 'login') {
-          // Redirect to login with specific error for non-existent account
-          return res.redirect(`${process.env.FRONTEND_URL}/login?error=account_not_found`);
-        } else {
-          // Redirect to register with error
-          return res.redirect(`${process.env.FRONTEND_URL}/register?error=google_signup_failed`);
-        }
+        const frontendUrl = process.env.FRONTEND_URL.split(',')[0].trim();
+        
+        // Always redirect to register with error for failed authentication
+        return res.redirect(`${frontendUrl}/register?error=google_auth_failed`);
       }
 
       console.log('✅ Google OAuth authentication successful');
-      console.log('User:', req.user);
+      console.log('User:', req.user.firstName, req.user.email);
 
       // Generate token
       const token = generateToken(req.user._id);
       console.log('🔑 Token generated for user:', req.user._id);
 
-      // Clear the OAuth intent from session
+      // Redirect to frontend with token
+      const frontendUrl = process.env.FRONTEND_URL.split(',')[0].trim(); // Use only the first URL
+      
+      // Check OAuth intent from session or state parameter BEFORE clearing session
+      const oauthIntent = req.session ? req.session.oauthIntent : (req.query.state || 'login');
+      console.log('🔍 OAuth intent determined:', oauthIntent);
+      console.log('🔍 Session oauthIntent:', req.session ? req.session.oauthIntent : 'undefined');
+      console.log('🔍 Query state:', req.query.state);
+      
+      // Clear the OAuth intent and processed code from session AFTER getting the intent
       if (req.session) {
         delete req.session.oauthIntent;
+        delete req.session.processedCode;
       }
-
-      // Redirect to frontend with token
-      const redirectUrl = `${process.env.FRONTEND_URL}/patient/dashboard?token=${token}`;
-      console.log('🔄 Redirecting to:', redirectUrl);
+      
+      // Always redirect to patient dashboard for successful Google OAuth
+      const redirectUrl = `${frontendUrl}/patient/dashboard?token=${token}`;
+      console.log('🔄 Google OAuth successful, redirecting to patient dashboard:', redirectUrl);
       res.redirect(redirectUrl);
     } catch (error) {
       console.error('❌ Error in Google OAuth callback:', error);
-      res.redirect(`${process.env.FRONTEND_URL}/login?error=google_auth_failed`);
+      console.error('Error stack:', error.stack);
+      const frontendUrl = process.env.FRONTEND_URL.split(',')[0].trim();
+      res.redirect(`${frontendUrl}/register?error=google_auth_failed`);
     }
   }
 );
@@ -622,6 +692,40 @@ router.post('/verify-email-otp', [
   } catch (error) {
     console.error('Verify email OTP error:', error);
     res.status(500).json({ message: 'Server error. Please try again.' });
+  }
+});
+
+// Check email verification status
+router.get('/check-email-verification', async (req, res) => {
+  try {
+    const { email } = req.query;
+
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required' });
+    }
+
+    // Find patient with the email
+    const patient = await Patient.findOne({ email });
+
+    if (!patient) {
+      return res.json({ verified: false, message: 'No patient found with this email' });
+    }
+
+    // Check if patient has verified OTP and is not fully registered yet
+    if (patient.otpVerified && !patient.isEmailVerified) {
+      return res.json({ verified: true, message: 'Email verified, ready for registration' });
+    }
+
+    // If patient is fully registered, they need to login instead
+    if (patient.isEmailVerified && patient.password) {
+      return res.json({ verified: false, message: 'Patient already registered, please login' });
+    }
+
+    return res.json({ verified: false, message: 'Email not verified' });
+
+  } catch (error) {
+    console.error('Check email verification error:', error);
+    res.status(500).json({ message: 'Server error', verified: false });
   }
 });
 
@@ -1300,7 +1404,20 @@ router.put('/patient/profile', auth, [
   body('lastName').optional().trim().notEmpty().withMessage('Last name cannot be empty'),
   body('email').optional().isEmail().withMessage('Valid email is required'),
   body('phone').optional().trim(),
-  body('dateOfBirth').optional().isISO8601().withMessage('Valid date is required'),
+  body('dateOfBirth').optional().custom((value) => {
+    if (!value) return true; // Allow empty values
+    // Accept both ISO string and date-only format (YYYY-MM-DD)
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    const isoRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+    if (dateRegex.test(value) || isoRegex.test(value)) {
+      const date = new Date(value);
+      if (isNaN(date.getTime())) {
+        throw new Error('Invalid date');
+      }
+      return true;
+    }
+    throw new Error('Date must be in YYYY-MM-DD or ISO format');
+  }),
   body('gender').optional().isIn(['male', 'female', 'other', 'prefer-not-to-say']).withMessage('Invalid gender'),
   body('address').optional().trim(),
   body('city').optional().trim(),
@@ -1308,8 +1425,14 @@ router.put('/patient/profile', auth, [
   body('zipCode').optional().trim()
 ], async (req, res) => {
   try {
+    console.log('🔍 Profile update request received:', {
+      body: req.body,
+      userPatientId: req.user?.patientId
+    });
+    
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
+      console.log('❌ Profile update validation errors:', errors.array());
       return res.status(400).json({
         success: false,
         message: 'Validation failed',
