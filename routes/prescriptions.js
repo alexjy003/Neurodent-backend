@@ -4,6 +4,7 @@ const { validationResult, body } = require('express-validator');
 const Prescription = require('../models/Prescription');
 const doctorAuth = require('../middleware/doctorAuth');
 const grokAIService = require('../services/grokAIService');
+const PDFService = require('../services/pdfService');
 
 const router = express.Router();
 
@@ -494,7 +495,7 @@ router.get('/:id/pdf', doctorAuth, async (req, res) => {
   try {
     const prescription = await Prescription.findById(req.params.id)
       .populate('patientId', 'firstName lastName age')
-      .populate('doctorId', 'firstName lastName specialty');
+      .populate('doctorId', 'firstName lastName specialization specialty');
 
     if (!prescription) {
       return res.status(404).json({
@@ -511,55 +512,31 @@ router.get('/:id/pdf', doctorAuth, async (req, res) => {
       });
     }
 
-    // Generate simple text-based prescription content
-    const prescriptionContent = `
-NEURODENT DENTAL CLINIC
-Prescription
+    console.log('📄 Generating PDF for prescription:', prescription._id);
 
-Date: ${new Date(prescription.prescriptionDate || prescription.createdAt).toLocaleDateString()}
-Prescription ID: ${prescription.prescriptionNumber || prescription._id}
+    // Generate professional PDF using PDFService
+    const pdfBuffer = await PDFService.generatePrescriptionPDF(
+      prescription, 
+      prescription.doctorId, 
+      prescription.patientId
+    );
 
-DOCTOR INFORMATION:
-Dr. ${prescription.doctorId.firstName} ${prescription.doctorId.lastName}
-Specialty: ${prescription.doctorId.specialty || 'General Dentistry'}
+    // Set proper PDF headers
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="prescription-${prescription._id}.pdf"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    
+    // Send the PDF buffer
+    res.send(pdfBuffer);
 
-PATIENT INFORMATION:
-Name: ${prescription.patientName || `${prescription.patientId.firstName} ${prescription.patientId.lastName}`}
-Age: ${prescription.patientId.age || 'N/A'} years
-
-DIAGNOSIS:
-${prescription.diagnosis}
-
-${prescription.symptoms ? `SYMPTOMS:\n${prescription.symptoms}\n` : ''}
-
-MEDICATIONS:
-${prescription.medications.map((med, index) => `
-${index + 1}. ${med.name}
-   Dosage: ${med.dosage}
-   Duration: ${med.duration}
-   ${med.frequency ? `Frequency: ${med.frequency}` : ''}
-   ${med.instructions ? `Instructions: ${med.instructions}` : ''}
-`).join('\n')}
-
-${prescription.generalInstructions ? `GENERAL INSTRUCTIONS:\n${prescription.generalInstructions}\n` : ''}
-
-${prescription.followUpDate ? `FOLLOW-UP DATE:\n${new Date(prescription.followUpDate).toLocaleDateString()}\n` : ''}
-
----
-This prescription was ${prescription.isAIGenerated ? 'AI-generated and ' : ''}issued by Neurodent Dental Clinic
-Generated on: ${new Date().toLocaleString()}
-    `.trim();
-
-    // Set headers for text download (will be PDF in production)
-    res.setHeader('Content-Type', 'text/plain');
-    res.setHeader('Content-Disposition', `attachment; filename="prescription-${prescription._id}.txt"`);
-    res.send(prescriptionContent);
+    console.log('✅ PDF generated and sent successfully');
 
   } catch (error) {
     console.error('❌ Error generating prescription PDF:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error'
+      message: 'Failed to generate prescription PDF',
+      error: error.message
     });
   }
 });
