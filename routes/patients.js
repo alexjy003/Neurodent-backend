@@ -8,10 +8,108 @@ const { cloudinary } = require('../config/cloudinary');
 
 const router = express.Router();
 
-// Get all patients (for doctors)
-router.get('/', doctorAuth, async (req, res) => {
+// Middleware to handle both admin and doctor authentication
+const adminOrDoctorAuth = async (req, res, next) => {
   try {
-    console.log('🔍 Fetching all patients for doctor...');
+    const token = req.header('Authorization')?.replace('Bearer ', '');
+    
+    if (!token) {
+      return res.status(401).json({ 
+        success: false,
+        message: 'No token, authorization denied' 
+      });
+    }
+
+    // Check if it's a mock admin token
+    if (token.startsWith('admin_token_')) {
+      const tokenParts = token.split('_');
+      if (tokenParts.length >= 3) {
+        const timestamp = parseInt(tokenParts[2]);
+        const eightHoursAgo = Date.now() - (8 * 60 * 60 * 1000);
+        
+        if (timestamp > eightHoursAgo) {
+          // Mock admin authentication successful
+          req.user = {
+            id: 'admin-1',
+            userType: 'admin',
+            firstName: 'Admin',
+            lastName: 'User',
+            email: 'admin@gmail.com'
+          };
+          return next();
+        } else {
+          return res.status(401).json({ 
+            success: false,
+            message: 'Admin token expired' 
+          });
+        }
+      } else {
+        return res.status(401).json({ 
+          success: false,
+          message: 'Invalid admin token format' 
+        });
+      }
+    }
+
+    // Try to verify as doctor JWT token
+    try {
+      const jwt = require('jsonwebtoken');
+      const Doctor = require('../models/Doctor');
+      
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      
+      if (decoded.doctorId) {
+        const doctor = await Doctor.findById(decoded.doctorId).select('-password');
+        
+        if (!doctor) {
+          return res.status(401).json({ 
+            success: false,
+            message: 'Doctor not found' 
+          });
+        }
+
+        if (doctor.availability !== 'active') {
+          return res.status(403).json({ 
+            success: false,
+            message: 'Doctor account has been deactivated' 
+          });
+        }
+
+        req.doctor = doctor;
+        req.user = {
+          id: doctor._id,
+          userType: 'doctor',
+          firstName: doctor.firstName,
+          lastName: doctor.lastName,
+          email: doctor.email
+        };
+        return next();
+      }
+    } catch (jwtError) {
+      console.error('JWT verification failed:', jwtError.message);
+    }
+
+    // If neither admin nor doctor token is valid
+    return res.status(401).json({ 
+      success: false,
+      message: 'Invalid token' 
+    });
+
+  } catch (error) {
+    console.error('❌ Auth middleware error:', error);
+    res.status(401).json({ 
+      success: false,
+      message: 'Token verification failed' 
+    });
+  }
+};
+
+// Get all patients (for doctors and admin)
+router.get('/', adminOrDoctorAuth, async (req, res) => {
+  try {
+    console.log('🔍 Fetching all patients for admin/doctor...');
+    console.log('🔍 User type:', req.user?.userType);
+    console.log('🔍 User info:', req.user?.firstName, req.user?.lastName);
     
     const patients = await Patient.find({})
       .select('-password -__v')
@@ -34,10 +132,11 @@ router.get('/', doctorAuth, async (req, res) => {
   }
 });
 
-// Get single patient by ID (for doctors)
-router.get('/:id', doctorAuth, async (req, res) => {
+// Get single patient by ID (for doctors and admin)
+router.get('/:id', adminOrDoctorAuth, async (req, res) => {
   try {
     console.log('🔍 Fetching patient by ID:', req.params.id);
+    console.log('🔍 User type:', req.user?.userType);
     
     const patient = await Patient.findById(req.params.id)
       .select('-password -__v');
